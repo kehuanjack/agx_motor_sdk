@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=40.0", "wheel", "pybind11>=2.11", "cmake>=3.14"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agx_motor_sdk"
+dynamic = ["version"]
+description = "AgileX motor driver SDK (arm and chassis protocols over CAN)"
+readme = { file = "README.md", content-type = "text/markdown" }
+authors = [
+  { name = "kehuanjack" },
+  { name = "Agilex Robotics Co., Ltd." },
+]
+license = "MIT"
+requires-python = ">=3.8"
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+Homepage = "https://github.com/kehuanjack/agx_motor_sdk"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agx_motor_sdk", "agx_motor_sdk.*"]
+
+[tool.setuptools.package-data]
+"agx_motor_sdk" = [
+    "py.typed",
+    "protocol/*.so",
+    "protocol/*.dll",
+    "protocol/*.dylib",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = { attr = "agx_motor_sdk.version.__version__" }
+
+[project.optional-dependencies]
+python-can = ["python-can>=3.3.4"]
+dev = ["pytest>=6.2.5,<8", "python-can>=3.3.4"]
