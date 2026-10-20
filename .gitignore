@@ -1,0 +1,17 @@
+build/
+install/
+log/
+.cache/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.agx_motor_sdk_build/
+compile_commands.json
+.vscode/
+
+# Prebuilt protocol libs (downloaded into Python package; not in git)
+agx_motor_sdk/protocol/*
+!agx_motor_sdk/protocol/.gitkeep
+
+# Legacy repo-root protocol/ (removed; ignore if recreated by mistake)
+/protocol/

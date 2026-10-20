@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.14)
+project(agx_sdk_installed_consumer LANGUAGES CXX)
+find_package(agx_motor_sdk CONFIG REQUIRED)
+add_executable(consumer main.cpp)
+target_compile_features(consumer PRIVATE cxx_std_17)
+target_link_libraries(consumer PRIVATE agx_motor_sdk)
+enable_testing()
+add_test(NAME installed.config COMMAND consumer)

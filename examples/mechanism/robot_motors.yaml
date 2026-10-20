@@ -1,0 +1,21 @@
+# Example multi-module config for examples/mechanism/*.py
+
+head:
+  can_channel: can0
+  profile_vel: 5.0
+  profile_accel: 5.0
+  profile_decel: 5.0
+  mit_tf: 16.0
+  mit_kp: 10.0
+  mit_kd: 0.8
+  joints:
+    - joint_name: head_pitch_joint
+      node_id: 6
+      polarity: -1.0
+      lower_limit: -0.523
+      upper_limit: 1.396
+    - joint_name: head_yaw_joint
+      node_id: 7
+      polarity: -1.0
+      lower_limit: -1.57
+      upper_limit: 1.57

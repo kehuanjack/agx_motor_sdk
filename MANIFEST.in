@@ -1,0 +1,9 @@
+include README.md
+include LICENSE
+include pyproject.toml
+include setup.py
+include protocol_fetch.py
+recursive-include agx_motor_sdk/protocol libagx_motor_protocol_arm.so
+recursive-include agx_motor_sdk/protocol libagx_motor_protocol_arm.dll
+recursive-include agx_motor_sdk/protocol libagx_motor_protocol_arm.dylib
+global-exclude *.py[cod] __pycache__ .DS_Store
