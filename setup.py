@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
 
-from setuptools import Extension, setup
+from setuptools import Extension, find_packages, setup
 from setuptools.command.build_ext import build_ext
 
 _here = Path(__file__).resolve().parent
@@ -49,8 +50,38 @@ class CMakeBuild(build_ext):
 
 cmdclass = get_cmdclass()
 cmdclass["build_ext"] = CMakeBuild
+version_info = runpy.run_path(str(_here / "agx_motor_sdk" / "version.py"))
 
 setup(
+    name="agx_motor_sdk",
+    version=version_info["__version__"],
+    description="AgileX motor driver SDK (arm protocol over CAN)",
+    long_description=(_here / "README.md").read_text(encoding="utf-8"),
+    long_description_content_type="text/markdown",
+    author="kehuanjack, Agilex Robotics Co., Ltd.",
+    license="Apache-2.0",
+    python_requires=">=3.8",
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Operating System :: POSIX :: Linux",
+    ],
+    project_urls={"Homepage": "https://github.com/kehuanjack/agx_motor_sdk"},
+    packages=find_packages(include=["agx_motor_sdk", "agx_motor_sdk.*"]),
+    include_package_data=True,
+    package_data={
+        "agx_motor_sdk": [
+            "py.typed",
+            "*.pyi",
+            "protocol/*.so",
+            "protocol/*.dll",
+            "protocol/*.dylib",
+        ],
+    },
+    install_requires=[],
+    extras_require={
+        "python-can": ["python-can>=3.3.4"],
+        "dev": ["pytest>=6.2.5,<8", "python-can>=3.3.4"],
+    },
     ext_modules=[CMakeExtension("agx_motor_sdk._native", sourcedir=str(_here))],
     cmdclass=cmdclass,
     zip_safe=False,

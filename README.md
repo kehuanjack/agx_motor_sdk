@@ -36,6 +36,19 @@ These commands use [uv](https://docs.astral.sh/uv/getting-started/installation/)
 to isolate Python dependencies. Installation automatically downloads and verifies
 the matching protocol library; network access is required.
 
+For an existing system Python environment, including ROS 2, install directly
+from the SDK source directory without upgrading runtime dependencies:
+
+```bash
+python3 -m pip install --user --no-deps .
+```
+
+Package metadata is defined in `setup.py`, compatible with setuptools 59.6.0
+and newer. System pip 22.0.2 is supported without upgrading system pip or
+setuptools. Build dependencies are installed in pip's temporary build environment;
+the compiler and native development libraries listed above are still required.
+`--no-deps` does not install optional dependencies such as `python-can`.
+
 ### 2. Set up CAN
 
 Connect the CAN adapter and power the motor. Replace `can0` with your interface:
