@@ -94,7 +94,7 @@ YAML loading and direct group construction both validate configuration. See
 | `connect()` | `Connect` | `bool`: whether all required CAN connections opened |
 | `close()` | `Close` | Disconnect this group without closing externally supplied ports |
 | `is_connected()` | `IsConnected` | `bool`: whether all required connections are available |
-| `enable()` / `disable()` | `Enable` / `Disable` | All joints |
+| `enable([interval])` / `disable([interval])` | `Enable` / `Disable` | All joints; optional delay `interval` [s] between joint commands (default `0`, must be ≥ 0) |
 | `configure()` | `Configure` | Apply YAML profile / MIT to all joints |
 | `joint_count` | `JointCount` | Number of joints |
 | `joint_names` | `JointNames` | Names in YAML order |

@@ -4,7 +4,10 @@
 #include "agx_motor_sdk/mechanism/motor_registry.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <stdexcept>
+#include <thread>
 
 namespace agx::motor::mechanism {
 namespace {
@@ -13,6 +16,18 @@ void ValidateModuleConfig(const GroupConfig& config, const char* context) {
   ValidateGroupConfig(config);
   if (config.joints.empty()) {
     throw std::invalid_argument(std::string(context) + ": group config has no joints");
+  }
+}
+
+void ValidateInterval(double interval_s) {
+  if (!std::isfinite(interval_s) || interval_s < 0.0) {
+    throw std::invalid_argument("interval_s must be a finite value >= 0");
+  }
+}
+
+void SleepInterval(double interval_s) {
+  if (interval_s > 0.0) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(interval_s));
   }
 }
 
@@ -217,23 +232,31 @@ const ArmMotor& JointGroupBase::ArmMotorAt(std::size_t index) const {
   return const_cast<JointGroupBase*>(this)->ArmMotorAt(index);
 }
 
-bool JointGroupBase::Enable() {
+bool JointGroupBase::Enable(double interval_s) {
+  ValidateInterval(interval_s);
   if (!IsConnected() && !Connect()) {
     return false;
   }
   bool ok = true;
   for (std::size_t i = 0; i < config_.joints.size(); ++i) {
+    if (i > 0) {
+      SleepInterval(interval_s);
+    }
     ok = ArmMotorAt(i).SetEnable(true) && ok;
   }
   return ok;
 }
 
-bool JointGroupBase::Disable() {
+bool JointGroupBase::Disable(double interval_s) {
+  ValidateInterval(interval_s);
   if (!IsConnected()) {
     return false;
   }
   bool ok = true;
   for (std::size_t i = 0; i < config_.joints.size(); ++i) {
+    if (i > 0) {
+      SleepInterval(interval_s);
+    }
     ok = ArmMotorAt(i).SetEnable(false) && ok;
   }
   return ok;

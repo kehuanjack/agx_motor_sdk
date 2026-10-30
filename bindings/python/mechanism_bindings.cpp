@@ -44,8 +44,12 @@ void BindJointGroupCommon(py::class_<JointGroupT, JointGroupBase, Holder>& cls) 
       .def("close", &JointGroupT::Close, py::call_guard<py::gil_scoped_release>(),
          "Release module references to shared CAN backend(s).")
       .def("is_connected", &JointGroupT::IsConnected)
-      .def("enable", &JointGroupT::Enable, "Enable all joints in this module.")
-      .def("disable", &JointGroupT::Disable, "Disable all joints in this module.")
+      .def("enable", &JointGroupT::Enable, py::arg("interval") = 0.0,
+           py::call_guard<py::gil_scoped_release>(),
+           "Enable all joints in this module, waiting ``interval`` seconds between joints.")
+      .def("disable", &JointGroupT::Disable, py::arg("interval") = 0.0,
+           py::call_guard<py::gil_scoped_release>(),
+           "Disable all joints in this module, waiting ``interval`` seconds between joints.")
       .def("configure", &JointGroupT::Configure,
           "Apply YAML profile / MIT parameters to all joints.")
       .def_property_readonly("joint_count", &JointGroupT::JointCount)

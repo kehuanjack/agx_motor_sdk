@@ -139,13 +139,28 @@ class ArmJointGroup:
         """Return whether :meth:`connect` succeeded and :meth:`close` has not been called."""
         return self._native.is_connected()
 
-    def enable(self) -> bool:
-        """Enable all joints in this module."""
-        return self._native.enable()
+    def enable(self, interval: float = 0.0) -> bool:
+        """Enable all joints in this module.
 
-    def disable(self) -> bool:
-        """Disable all joints in this module."""
-        return self._native.disable()
+        Args:
+            interval: Delay in seconds between consecutive joint commands.
+                Use a small value if a board drops back-to-back frames.
+
+        Raises:
+            ValueError: If ``interval`` is negative or not finite.
+        """
+        return self._native.enable(interval)
+
+    def disable(self, interval: float = 0.0) -> bool:
+        """Disable all joints in this module.
+
+        Args:
+            interval: Delay in seconds between consecutive joint commands.
+
+        Raises:
+            ValueError: If ``interval`` is negative or not finite.
+        """
+        return self._native.disable(interval)
 
     def configure(self) -> bool:
         """Apply YAML profile / MIT settings to all joints."""

@@ -49,9 +49,14 @@ class JointGroupBase {
   bool IsConnected() const;
 
   /// Enable all joints in the module.
-  bool Enable();
+  /// @param interval_s Delay in seconds between consecutive joint commands (default 0).
+  ///        Use a small value if a board drops frames sent back-to-back.
+  /// @throws std::invalid_argument if ``interval_s`` is negative or not finite.
+  bool Enable(double interval_s = 0.0);
   /// Disable all joints in the module.
-  bool Disable();
+  /// @param interval_s Delay in seconds between consecutive joint commands (default 0).
+  /// @throws std::invalid_argument if ``interval_s`` is negative or not finite.
+  bool Disable(double interval_s = 0.0);
   /// Run ``Configure`` on every joint (profile / MIT from YAML).
   bool Configure();
 
