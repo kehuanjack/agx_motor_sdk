@@ -11,6 +11,7 @@
 using agx::motor::mechanism::GroupConfig;
 using agx::motor::mechanism::JointConfig;
 using agx::motor::mechanism::LoadModuleConfig;
+using agx::motor::mechanism::Protocol;
 using agx::motor::mechanism::ValidateGroupConfig;
 
 void Require(bool condition, const std::string& message) {
@@ -56,6 +57,12 @@ struct TemporaryYaml {
     stream.close();
     Require(!stream.fail(), "temporary YAML write failed");
   }
+  void WriteRaw(const std::string& text) {
+    std::ofstream stream(path);
+    stream << text;
+    stream.close();
+    Require(!stream.fail(), "temporary YAML write failed");
+  }
 };
 
 int main() {
@@ -88,9 +95,9 @@ int main() {
     Reject([&] { ValidateGroupConfig(config); }, "duplicate resolved node");
     config.joints.back().can_channel = "fake1";
     ValidateGroupConfig(config);
-        Reject([&] { agx::motor::mechanism::ArmJointGroup group(config, "fake1"); },
+        Reject([&] { agx::motor::mechanism::JointGroup group(config, "fake1"); },
           "channel override merges duplicate nodes");
-        Reject([&] { agx::motor::mechanism::ArmJointGroup group(config, ""); },
+        Reject([&] { agx::motor::mechanism::JointGroup group(config, ""); },
           "empty channel override");
 
     const float nan = std::numeric_limits<float>::quiet_NaN();
@@ -145,6 +152,36 @@ int main() {
       Require(loaded.joints.front().profile_vel_rad_s == 2.5f, "profile inheritance");
       Require(loaded.joints.back().polarity == -1.f, "polarity override");
     }
+    config = ValidConfig();
+    config.joints.push_back(config.joints.front());
+    config.joints.back().name = "rb";
+    config.joints.back().node_id = 2;
+    config.joints.back().protocol = Protocol::kRb200;
+    ValidateGroupConfig(config);
+
+    yaml.WriteRaw(
+        "lift:\n  can_channel: fake0\n  protocol: rb200\n  joints:\n"
+        "    - joint_name: a\n      node_id: 1\n"
+        "    - joint_name: b\n      node_id: 2\n      can_channel: fake1\n"
+        "      protocol: arm\n");
+    const auto mixed = LoadModuleConfig(yaml.path, "lift");
+    Require(mixed.protocol == Protocol::kRb200, "module protocol");
+    Require(mixed.joints.front().protocol == Protocol::kRb200, "joint protocol inheritance");
+    Require(mixed.joints.back().protocol == Protocol::kArm, "joint protocol override");
+    yaml.WriteRaw(
+        "lift:\n  can_channel: fake0\n  protocol: rb200\n  joints:\n"
+        "    - joint_name: a\n      node_id: 1\n"
+        "    - joint_name: b\n      node_id: 2\n      protocol: arm\n");
+    const auto shared = LoadModuleConfig(yaml.path, "lift");
+    Require(shared.joints.front().protocol == Protocol::kRb200 &&
+                shared.joints.back().protocol == Protocol::kArm,
+            "mixed protocols on one channel");
+    yaml.WriteRaw(
+        "lift:\n  can_channel: fake0\n  protocol: canopen\n  joints:\n"
+        "    - joint_name: a\n      node_id: 1\n");
+    Reject([&] { LoadModuleConfig(yaml.path, "lift"); }, "unknown protocol");
+    Require(LoadModuleConfig(AGX_SDK_EXAMPLE_YAML, "head").protocol == Protocol::kArm,
+            "default protocol");
     ValidateGroupConfig(LoadModuleConfig(AGX_SDK_EXAMPLE_YAML, "head"));
     std::cout << "configuration software checks passed\n";
     return 0;

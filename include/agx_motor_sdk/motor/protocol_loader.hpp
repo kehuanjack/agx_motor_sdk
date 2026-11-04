@@ -8,14 +8,15 @@
 namespace agx {
 namespace motor {
 
-enum class ProtocolVariant { kArm };
-
+/// dlopen wrapper for a motor protocol library: resolves the common C ABI
+/// (protocol_api.h). Protocol-specific symbols are resolved by subclasses
+/// (ArmProtocolLibrary, Rb200ProtocolLibrary).
 class ProtocolLibrary {
  public:
-  static std::shared_ptr<ProtocolLibrary> Load(ProtocolVariant variant,
-                                               const std::string& path = {});
+  virtual ~ProtocolLibrary();
 
-  ~ProtocolLibrary();
+  ProtocolLibrary(const ProtocolLibrary&) = delete;
+  ProtocolLibrary& operator=(const ProtocolLibrary&) = delete;
 
   AgxMotorProtocolHandle* Create();
   void Destroy(AgxMotorProtocolHandle* handle);
@@ -29,8 +30,6 @@ class ProtocolLibrary {
 
   int GetHighSpeedFeedback(AgxMotorProtocolHandle* handle, uint8_t node_id,
                            AgxMotorHighSpeedFeedback* out) const;
-  int GetLowSpeedFeedback(AgxMotorProtocolHandle* handle, uint8_t node_id,
-                          AgxMotorLowSpeedFeedback* out) const;
 
   int SetTarget(AgxMotorProtocolHandle* handle, uint8_t node_id, float value,
                 uint8_t mode, float timeout_s);
@@ -49,28 +48,28 @@ class ProtocolLibrary {
                     float velocity);
   int SetCurrentLimit(AgxMotorProtocolHandle* handle, uint8_t node_id,
                       float current);
-
-  int SetMitControl(AgxMotorProtocolHandle* handle, uint8_t node_id, float p_des,
-                    float v_des, float kp, float kd, float t_ff, float t_am);
-  int SetMitControlCrc(AgxMotorProtocolHandle* handle, uint8_t node_id,
-                       float p_des, float v_des, float kp, float kd, float t_ff,
-                       float t_am);
-  int SetCollisionThreshold(AgxMotorProtocolHandle* handle, uint8_t node_id,
-                            float current_threshold, float time_threshold);
-  int GetParam(AgxMotorProtocolHandle* handle, uint8_t node_id, uint8_t idx1,
-               uint8_t idx2, float timeout_s, float* out);
-  int SetParam(AgxMotorProtocolHandle* handle, uint8_t node_id, uint8_t idx1,
-               uint8_t idx2, float value, float timeout_s);
   int GetVersion(AgxMotorProtocolHandle* handle, uint8_t node_id,
                  float timeout_s, AgxMotorVersionInfo* out);
 
+  /// Empty on success; dlopen / symbol error otherwise.
   const std::string& load_error() const { return load_error_; }
 
- private:
-  explicit ProtocolLibrary(void* dl_handle, ProtocolVariant variant);
+ protected:
+  /// Open the library. ``path`` empty: use ``env_var`` if set, otherwise search
+  /// the SDK ``protocol/`` dir, system dirs and AMENT/COLCON prefixes for
+  /// ``lib_filename``.
+  ProtocolLibrary(const char* lib_filename, const char* env_var,
+                  const std::string& path);
 
+  bool is_open() const { return dl_handle_ != nullptr && load_error_.empty(); }
+  void* Symbol(const char* name) const;
+  template <typename T>
+  T LoadSymbol(const char* name) const {
+    return reinterpret_cast<T>(Symbol(name));
+  }
+
+ private:
   void* dl_handle_{nullptr};
-  ProtocolVariant variant_;
   std::string load_error_;
 
   using CreateFn = AgxMotorProtocolHandle* (*)();
@@ -81,8 +80,6 @@ class ProtocolLibrary {
                        uint8_t, uint64_t);
   using HsFn = int (*)(AgxMotorProtocolHandle*, uint8_t,
                        AgxMotorHighSpeedFeedback*);
-  using LsFn = int (*)(AgxMotorProtocolHandle*, uint8_t,
-                       AgxMotorLowSpeedFeedback*);
   using TargetFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float, uint8_t,
                            float);
   using EnableFn = int (*)(AgxMotorProtocolHandle*, uint8_t, int, int, int);
@@ -95,15 +92,6 @@ class ProtocolLibrary {
                                   float);
   using ProfileVelFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float);
   using CurrentLimitFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float);
-  using MitFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float, float, float,
-                        float, float, float);
-  using MitCrcFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float, float,
-                           float, float, float, float);
-  using CollisionFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float, float);
-  using GetParamFn = int (*)(AgxMotorProtocolHandle*, uint8_t, uint8_t,
-                             uint8_t, float, float*);
-  using SetParamFn = int (*)(AgxMotorProtocolHandle*, uint8_t, uint8_t,
-                             uint8_t, float, float);
   using VersionFn = int (*)(AgxMotorProtocolHandle*, uint8_t, float,
                             AgxMotorVersionInfo*);
 
@@ -113,7 +101,6 @@ class ProtocolLibrary {
   HasTxFn has_tx_{nullptr};
   RxFn rx_{nullptr};
   HsFn hs_{nullptr};
-  LsFn ls_{nullptr};
   TargetFn target_{nullptr};
   EnableFn enable_{nullptr};
   ResetFn reset_{nullptr};
@@ -122,11 +109,6 @@ class ProtocolLibrary {
   ProfileAccDecFn profile_acc_dec_{nullptr};
   ProfileVelFn profile_vel_{nullptr};
   CurrentLimitFn current_limit_{nullptr};
-  MitFn mit_{nullptr};
-  MitCrcFn mit_crc_{nullptr};
-  CollisionFn collision_{nullptr};
-  GetParamFn get_param_{nullptr};
-  SetParamFn set_param_{nullptr};
   VersionFn version_{nullptr};
 };
 

@@ -1,4 +1,4 @@
-"""Download prebuilt arm protocol library before pip install."""
+"""Download prebuilt arm and RB200 protocol libraries before pip install."""
 import hashlib
 import json
 import os
@@ -14,32 +14,29 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 _ROOT = Path(__file__).resolve().parent
 _SHA256_MARKER = "AGX_MOTOR_SDK_PROTOCOL_SHA256"
-_VARIANTS = ("arm",)
+_VARIANTS = ("arm", "rb200")
+_VERSION_KEYS = {"arm": "__protocol_version__", "rb200": "__rb200_protocol_version__"}
+_ENV_PREFIX = {"arm": "AGX_MOTOR_SDK_PROTOCOL", "rb200": "AGX_MOTOR_SDK_RB200_PROTOCOL"}
 
 
-def _parse_version_py() -> Tuple[str, str]:
+def _parse_version_py() -> Dict[str, str]:
     text = (_ROOT / "agx_motor_sdk" / "version.py").read_text(encoding="utf-8")
-    sdk_version: Optional[str] = None
-    protocol_version: Optional[str] = None
+    values: Dict[str, str] = {}
     for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("__protocol_version__"):
-            protocol_version = line.split("=", 1)[1].strip().strip('"').strip("'")
-        elif line.startswith("__version__"):
-            sdk_version = line.split("=", 1)[1].strip().strip('"').strip("'")
-    if not sdk_version:
+        name, sep, value = line.strip().partition("=")
+        if sep:
+            values[name.strip()] = value.strip().strip('"').strip("'")
+    if not values.get("__version__"):
         raise RuntimeError("cannot read __version__ from agx_motor_sdk/version.py")
-    if not protocol_version:
-        protocol_version = sdk_version
-    return sdk_version, protocol_version
+    return values
 
 
-def _read_protocol_version() -> str:
-    env = os.environ.get("AGX_MOTOR_SDK_PROTOCOL_VERSION", "").strip()
+def _read_protocol_version(variant: str) -> str:
+    env = os.environ.get(f"{_ENV_PREFIX[variant]}_VERSION", "").strip()
     if env:
         return env
-    _, protocol_version = _parse_version_py()
-    return protocol_version
+    values = _parse_version_py()
+    return values.get(_VERSION_KEYS[variant]) or values.get("__protocol_version__") or values["__version__"]
 
 
 def _host_platform_arch() -> Tuple[str, str]:
@@ -269,18 +266,32 @@ def download_protocol_libs_if_needed() -> None:
 
     plat, arch = _host_platform_arch()
     dest_dir = _ROOT / "agx_motor_sdk" / "protocol"
-    protocol_version = _read_protocol_version()
     repo = os.environ.get("AGX_MOTOR_SDK_GITHUB_REPO", "kehuanjack/agx_motor_protocol_releases").strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise RuntimeError("AGX_MOTOR_SDK_GITHUB_REPO must be a GitHub owner/repo.")
-    tag = os.environ.get("AGX_MOTOR_SDK_PROTOCOL_TAG", "").strip() or f"arm-can-v{protocol_version}"
     token = _github_token()
+
+    for variant in _VARIANTS:
+        try:
+            _fetch_variant(variant, plat, arch, repo, dest_dir, token)
+        except RuntimeError as e:
+            if variant == "arm" or _rb200_required():
+                raise
+            # RB200 is optional: arm-only setups must still install.
+            print(f"agx_motor_sdk: warning: skip optional rb200 protocol library: {e}", file=sys.stderr)
+
+
+def _rb200_required() -> bool:
+    return os.environ.get("AGX_MOTOR_SDK_REQUIRE_RB200", "").strip() not in ("", "0")
+
+
+def _fetch_variant(variant: str, plat: str, arch: str, repo: str, dest_dir: Path, token: Optional[str]) -> None:
+    protocol_version = _read_protocol_version(variant)
+    tag = os.environ.get(f"{_ENV_PREFIX[variant]}_TAG", "").strip() or f"{variant}-can-v{protocol_version}"
     metadata = _fetch_release_metadata(repo, tag, token)
     body = metadata.get("body")
     sha_map = _parse_sha256_map(body if isinstance(body, str) else "")
-
-    for variant in _VARIANTS:
-        _ensure_variant(variant, plat, arch, protocol_version, repo, sha_map, dest_dir, tag, metadata, token)
+    _ensure_variant(variant, plat, arch, protocol_version, repo, sha_map, dest_dir, tag, metadata, token)
 
 
 def get_cmdclass() -> Dict[str, Any]:

@@ -2,7 +2,7 @@
 #include <iostream>
 #include <thread>
 
-#include "agx_motor_sdk/motor/arm_driver.hpp"
+#include "agx_motor_sdk/motor/arm/arm_driver.hpp"
 #include "demo_utils.hpp"
 
 int main(int argc, char** argv) {

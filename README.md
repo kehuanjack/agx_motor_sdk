@@ -1,7 +1,8 @@
 # agx_motor_sdk
 
-Python and C++ SDK for AgileX arm CAN motors. Control one motor with `ArmDriver`,
-or configure multiple joints with `ArmJointGroup`.
+Python and C++ SDK for AgileX CAN motors. Each protocol has its own driver:
+`ArmDriver` for arm motors and `Rb200Driver` for RB200 drivers. Configure multiple
+joints, of either protocol, with `JointGroup`.
 
 Supports Linux SocketCAN at **1 Mbps**, with motor node IDs **1..15**. Prebuilt
 protocol libraries are available for **x86_64** and **aarch64**, built on Ubuntu
@@ -13,7 +14,7 @@ protocol libraries are available for **x86_64** and **aarch64**, built on Ubuntu
 | Configure multiple joints | [Joint groups](#joint-groups), then [YAML configuration](YAML_CONFIG.md) |
 | Use C++ | [C++ installation](#c-installation) |
 | Use ROS 2 | [ROS 2 installation](#ros-2-installation) |
-| Look up methods and parameters | [API reference](API.md) |
+| Look up methods and parameters | [API reference](API.md); protocol extras in [Arm](docs/API_ARM.md) and [RB200](docs/API_RB200.md) |
 | Install offline or choose a backend | [Advanced usage](docs/ADVANCED.md) |
 | Run software checks | [Testing](docs/TESTING.md) |
 
@@ -98,9 +99,9 @@ with the [configuration example](YAML_CONFIG.md#minimal-example), then load its
 top-level module key:
 
 ```python
-from agx_motor_sdk.mechanism import ArmJointGroup
+from agx_motor_sdk.mechanism import JointGroup
 
-group = ArmJointGroup.from_yaml("robot_motors.yaml", "head")
+group = JointGroup.from_yaml("robot_motors.yaml", "head")
 try:
     if not group.connect():
         raise RuntimeError("Cannot connect: check the CAN interface")
@@ -115,6 +116,8 @@ finally:
 This example reads cached feedback without requesting motion. Group commands use
 joint-space values; `ArmDriver` commands use motor-space values. Positions are
 radians and velocities are radians per second. See [control methods](API.md#mechanism-layer).
+`group.motor(i)` returns `ArmMotor` or `Rb200Motor` according to the joint's
+YAML `protocol`; protocol-only methods (for example MIT) exist only on that class.
 
 **Before enabling or commanding motion, secure the mechanism and check targets
 and limits. Enabling can apply torque; closing the SDK does not disable the motor.**

@@ -42,7 +42,22 @@ float ResolveJointScalar(const YAML::Node& node, const char* key,
   return resolved.has_value() ? *resolved : fallback;
 }
 
+Protocol ParseProtocol(const YAML::Node& node, Protocol fallback,
+                       const std::string& context) {
+  if (!node || !node["protocol"]) {
+    return fallback;
+  }
+  const auto name = node["protocol"].as<std::string>();
+  const auto protocol = ProtocolFromString(name);
+  if (!protocol) {
+    throw std::invalid_argument(context + ": unknown protocol '" + name +
+                                "' (expected arm or rb200)");
+  }
+  return *protocol;
+}
+
 struct ModuleJointDefaults {
+  Protocol protocol{Protocol::kArm};
   std::optional<float> profile_vel;
   std::optional<float> profile_accel;
   std::optional<float> profile_decel;
@@ -72,6 +87,7 @@ JointConfig ParseJointConfig(const YAML::Node& node, const std::string& context,
   } else {
     cfg.can_channel = module_can_channel;
   }
+  cfg.protocol = ParseProtocol(node, defaults.protocol, context);
   cfg.polarity = node["polarity"] ? node["polarity"].as<float>() : 1.f;
   cfg.profile_vel_rad_s = ResolveJointValue(node, "profile_vel", defaults.profile_vel);
   cfg.profile_accel_rad_s2 = ResolveJointValue(node, "profile_accel", defaults.profile_accel);
@@ -154,6 +170,7 @@ GroupConfig LoadModuleConfig(const std::string& yaml_path, const std::string& mo
 
   GroupConfig config;
   config.can_channel = RequireString(module, "can_channel", yaml_path);
+  config.protocol = ParseProtocol(module, Protocol::kArm, yaml_path + " (" + module_key + ")");
   config.default_profile_vel_rad_s = OptionalFloat(module, "profile_vel");
   config.profile_accel_rad_s2 = OptionalFloat(module, "profile_accel");
   config.profile_decel_rad_s2 = OptionalFloat(module, "profile_decel");
@@ -164,6 +181,7 @@ GroupConfig LoadModuleConfig(const std::string& yaml_path, const std::string& mo
   config.torque_b = OptionalFloat(module, "torque_b");
 
   const ModuleJointDefaults defaults{
+      config.protocol,
       config.default_profile_vel_rad_s,
       config.profile_accel_rad_s2,
       config.profile_decel_rad_s2,

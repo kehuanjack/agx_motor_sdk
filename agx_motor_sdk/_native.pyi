@@ -2,11 +2,14 @@
 
 Public documentation:
 
-* Drivers: :mod:`agx_motor_sdk.motor.arm_driver`
-* Per-joint motors: :mod:`agx_motor_sdk.motor.arm_motor_base`
-* Mechanism: :mod:`agx_motor_sdk.mechanism.joint_group` (public: `ArmJointGroup` only)
+* Drivers: :mod:`agx_motor_sdk.motor.motor_driver`, :mod:`~agx_motor_sdk.motor.arm_driver`,
+  :mod:`~agx_motor_sdk.motor.rb200_driver`
+* Per-joint motors: :mod:`agx_motor_sdk.motor.motor_base`, :mod:`~agx_motor_sdk.motor.arm_motor`,
+  :mod:`~agx_motor_sdk.motor.rb200_motor`
+* Mechanism: :mod:`agx_motor_sdk.mechanism.joint_group` (public: `JointGroup`)
 * Feedback types (this file): :class:`DriverStatus`, :class:`HighSpeedFeedback`,
-  :class:`LowSpeedFeedback`, :class:`VersionInfo`
+  :class:`LowSpeedFeedback`, :class:`Cia402Status`, :class:`Rb200LowSpeedFeedback`,
+  :class:`VersionInfo`
 """
 
 from enum import Enum
@@ -52,6 +55,32 @@ class LowSpeedFeedback:
     timestamp: float
     timestamp_ns: int
 
+class Cia402Status:
+    """Decoded RB200 CiA402 status word bits."""
+
+    ready_to_switch_on: bool
+    switched_on: bool
+    operation_enabled: bool
+    fault: bool
+    voltage_enabled: bool
+    quick_stop: bool
+    switch_on_disabled: bool
+    warning: bool
+    remote: bool
+    target_reached: bool
+    internal_limit_active: bool
+    homing_complete: bool
+
+class Rb200LowSpeedFeedback:
+    """Cached RB200 low-speed feedback (CAN ID 0x530 + node)."""
+
+    status_word: int
+    error_code: int
+    tpdo2_count: int
+    status: Cia402Status
+    timestamp: float
+    timestamp_ns: int
+
 class VersionInfo:
     """Firmware version query result."""
 
@@ -62,34 +91,18 @@ class VersionInfo:
     timestamp_ns: int
 
 # ---------------------------------------------------------------------------
-# Arm driver
+# Drivers (MotorDriver base, ArmDriver, Rb200Driver)
 # ---------------------------------------------------------------------------
 
-class ArmDriver:
-    class MotorParam(Enum):
-        ID: int
-        AC: int
-        DC: int
-        VV: int
-        IQ: int
-        OI: int
-        OT: int
-        TX: int
-        TC: int
-        TF: int
-        SO: int
-        PP: int
-        KP: int
-        KI: int
-
-    def __init__(self, can_port: Any = None) -> None: ...
+class MotorDriver:
+    @property
+    def protocol(self) -> str: ...
     def close(self) -> None: ...
     def attach_can_port(self, can_port: Any) -> None: ...
     def handle_rx_once(
         self, can_id: int, data: bytes, timestamp_ns: int = 0
     ) -> bool: ...
     def get_high_speed_feedback(self, node_id: int) -> Optional[HighSpeedFeedback]: ...
-    def get_low_speed_feedback(self, node_id: int) -> Optional[LowSpeedFeedback]: ...
     def get_version(self, node_id: int, timeout: float = 1.0) -> Optional[VersionInfo]: ...
     def set_enable(
         self,
@@ -107,9 +120,6 @@ class ArmDriver:
     def set_target_position(
         self, node_id: int, position: float, timeout: float = 0.0
     ) -> bool: ...
-    def set_target_current(
-        self, node_id: int, current: float, timeout: float = 0.0
-    ) -> bool: ...
     def set_reset(self, node_id: int, mode: int = 0, timeout: float = 1.0) -> bool: ...
     def set_clear_error(self, node_id: int, timeout: float = 1.0) -> bool: ...
     def set_zero_offset(
@@ -124,6 +134,29 @@ class ArmDriver:
     ) -> bool: ...
     def set_profile_vel(self, node_id: int, velocity: float) -> bool: ...
     def set_current_limit(self, node_id: int, current: float) -> bool: ...
+
+class ArmDriver(MotorDriver):
+    class MotorParam(Enum):
+        ID: int
+        AC: int
+        DC: int
+        VV: int
+        IQ: int
+        OI: int
+        OT: int
+        TX: int
+        TC: int
+        TF: int
+        SO: int
+        PP: int
+        KP: int
+        KI: int
+
+    def __init__(self, can_port: Any = None) -> None: ...
+    def get_low_speed_feedback(self, node_id: int) -> Optional[LowSpeedFeedback]: ...
+    def set_target_current(
+        self, node_id: int, current: float, timeout: float = 0.0
+    ) -> bool: ...
     def set_mit_control(
         self,
         node_id: int,
@@ -158,6 +191,10 @@ class ArmDriver:
         timeout: float = 1.0,
     ) -> bool: ...
 
+class Rb200Driver(MotorDriver):
+    def __init__(self, can_port: Any = None) -> None: ...
+    def get_low_speed_feedback(self, node_id: int) -> Optional[Rb200LowSpeedFeedback]: ...
+
 # ---------------------------------------------------------------------------
 # CAN (native backend)
 # ---------------------------------------------------------------------------
@@ -187,6 +224,7 @@ class JointConfig:
     name: str
     node_id: int
     can_channel: str
+    protocol: str
     polarity: float
     profile_vel_rad_s: Optional[float]
     profile_accel_rad_s2: Optional[float]
@@ -203,6 +241,7 @@ class JointConfig:
 
 class GroupConfig:
     can_channel: str
+    protocol: str
     default_profile_vel_rad_s: Optional[float]
     profile_accel_rad_s2: Optional[float]
     profile_decel_rad_s2: Optional[float]
@@ -213,7 +252,7 @@ class GroupConfig:
     torque_b: Optional[float]
     joints: List[JointConfig]
 
-class ArmMotorBase:
+class MotorBase:
     @property
     def is_valid(self) -> bool: ...
     @property
@@ -230,17 +269,12 @@ class ArmMotorBase:
         self, enable: bool = True, has_brake: bool = False, brake_on: bool = False
     ) -> bool: ...
     def get_state(self) -> Optional[JointState]: ...
-    def set_mit(
-        self, position_rad: float, velocity_rad_s: float, torque_nm: float
-    ) -> bool: ...
     def configure(self) -> bool: ...
     def get_high_speed_feedback(self) -> Optional[HighSpeedFeedback]: ...
-    def get_low_speed_feedback(self) -> Optional[LowSpeedFeedback]: ...
     def get_version(self, timeout: float = 1.0) -> Optional[VersionInfo]: ...
     def set_target(self, value: float, mode: int, timeout: float = 0.0) -> bool: ...
     def set_target_position(self, position: float, timeout: float = 0.0) -> bool: ...
     def set_target_velocity(self, velocity: float, timeout: float = 0.0) -> bool: ...
-    def set_target_current(self, current: float, timeout: float = 0.0) -> bool: ...
     def set_reset(self, mode: int = 0, timeout: float = 1.0) -> bool: ...
     def set_clear_error(self, timeout: float = 1.0) -> bool: ...
     def set_zero_offset(
@@ -252,6 +286,13 @@ class ArmMotorBase:
     def set_profile_acc_dec(self, acceleration: float, deceleration: float) -> bool: ...
     def set_profile_vel(self, velocity: float) -> bool: ...
     def set_current_limit(self, current: float) -> bool: ...
+
+class ArmMotor(MotorBase):
+    def set_mit(
+        self, position_rad: float, velocity_rad_s: float, torque_nm: float
+    ) -> bool: ...
+    def get_low_speed_feedback(self) -> Optional[LowSpeedFeedback]: ...
+    def set_target_current(self, current: float, timeout: float = 0.0) -> bool: ...
     def set_mit_control(
         self,
         p_des: float,
@@ -280,10 +321,11 @@ class ArmMotorBase:
         self, param: ArmDriver.MotorParam, value: float, timeout: float = 1.0
     ) -> bool: ...
 
-class JointGroupBase:
-    INVALID_JOINT_INDEX: int
+class Rb200Motor(MotorBase):
+    def get_low_speed_feedback(self) -> Optional[Rb200LowSpeedFeedback]: ...
 
-class ArmJointGroup(JointGroupBase):
+class JointGroup:
+    INVALID_JOINT_INDEX: int
     def __init__(self, config: GroupConfig) -> None: ...
     def __init__(self, config: GroupConfig, can_channel: str) -> None: ...
     def connect(self) -> bool: ...
@@ -313,7 +355,7 @@ class ArmJointGroup(JointGroupBase):
         self, index: int, position_rad: float, timeout: float = 0.0
     ) -> bool: ...
     def get_state(self, index: int) -> Optional[JointState]: ...
-    def motor(self, index: int) -> ArmMotorBase: ...
+    def motor(self, index: int) -> MotorBase: ...
     def attach_can_port(self, can_port: Any, channel: Optional[str] = None) -> None: ...
     def set_mit(
         self,
@@ -327,9 +369,9 @@ class ArmJointGroup(JointGroupBase):
         yaml_path: str,
         module_key: str,
         can_channel: Optional[str] = None,
-    ) -> ArmJointGroup: ...
+    ) -> JointGroup: ...
 
-def create_joint_group(config: GroupConfig) -> JointGroupBase: ...
-def create_joint_group(config: GroupConfig, can_channel: str) -> JointGroupBase: ...
+def create_joint_group(config: GroupConfig) -> JointGroup: ...
+def create_joint_group(config: GroupConfig, can_channel: str) -> JointGroup: ...
 
 def load_module_config(yaml_path: str, module_key: str) -> GroupConfig: ...

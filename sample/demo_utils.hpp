@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "agx_motor_sdk/can/can_port.hpp"
+#include "agx_motor_sdk/motor/arm/types.hpp"
 #include "agx_motor_sdk/motor/types.hpp"
 
 namespace agx::motor::demo {

@@ -58,12 +58,17 @@ add_library(${PROJECT_NAME}
   src/can/can_port.cpp
   src/can/socket_can.cpp
   src/motor/protocol_loader.cpp
-  src/motor/arm_driver.cpp
+  src/motor/motor_driver.cpp
+  src/motor/arm/arm_protocol_library.cpp
+  src/motor/arm/arm_driver.cpp
+  src/motor/rb200/rb200_protocol_library.cpp
+  src/motor/rb200/rb200_driver.cpp
   src/mechanism/config.cpp
   src/mechanism/can_bus.cpp
   src/mechanism/joint_space.cpp
-  src/mechanism/arm_motor_base.cpp
-  src/mechanism/arm_motor.cpp
+  src/mechanism/motor_base.cpp
+  src/mechanism/arm/arm_motor.cpp
+  src/mechanism/rb200/rb200_motor.cpp
   src/mechanism/motor_registry.cpp
   src/mechanism/joint_group.cpp
 )
@@ -105,8 +110,11 @@ if(BUILD_WITHOUT_ROS)
 
   file(GLOB _agx_install_protocol_libs
     "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.so"
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_rb200.so"
     "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.dll"
-    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.dylib")
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_rb200.dll"
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.dylib"
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_rb200.dylib")
   if(_agx_install_protocol_libs)
     install(FILES ${_agx_install_protocol_libs}
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/agx_motor_sdk/protocol)

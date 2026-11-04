@@ -26,10 +26,10 @@ int main(int argc, char** argv) {
     }
   }
 
-  agx::motor::mechanism::ArmJointGroup group =
+  agx::motor::mechanism::JointGroup group =
       can_channel.empty()
-          ? agx::motor::mechanism::ArmJointGroup::FromYaml(yaml_path, "head")
-          : agx::motor::mechanism::ArmJointGroup::FromYaml(yaml_path, "head",
+          ? agx::motor::mechanism::JointGroup::FromYaml(yaml_path, "head")
+          : agx::motor::mechanism::JointGroup::FromYaml(yaml_path, "head",
                                                            can_channel);
 
   if (!group.Connect()) {
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     if (!group.IsValidJointIndex(idx)) {
       continue;
     }
-    auto& motor = group.MotorArm(idx);
+    auto& motor = group.Motor(idx);
     if (!motor.IsValid()) {
       std::cout << name << ": invalid motor handle" << std::endl;
       continue;

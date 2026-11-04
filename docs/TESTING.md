@@ -46,9 +46,13 @@ Replace the two paths below with your build outputs:
 ```bash
 AGX_SDK_TEST_NATIVE_DIR=/absolute/path/to/build/lib \
 AGX_MOTOR_SDK_ARM_LIB=/absolute/path/to/libagx_motor_protocol_arm.so \
+AGX_MOTOR_SDK_RB200_LIB=/absolute/path/to/libagx_motor_protocol_rb200.so \
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 .venv/bin/python -I -m pytest tests/test_native_lifecycle.py
 ```
+
+`AGX_MOTOR_SDK_RB200_LIB` is optional. Without it, the mixed arm/RB200 group check
+(`motor()` returns `ArmMotor` / `Rb200Motor` by joint protocol) is skipped.
 
 Passing these checks does not replace testing against your actual CAN adapter,
 motor firmware and mechanism. A virtual CAN test can verify software transport

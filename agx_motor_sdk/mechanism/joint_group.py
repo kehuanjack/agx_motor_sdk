@@ -2,13 +2,13 @@
 
 The public mechanism API is::
 
-    ArmJointGroup.from_yaml(...)
+    JointGroup.from_yaml(...)
         → connect() → motor(index) → per-joint commands
 
 Group objects manage shared CAN backends and module-level batch operations
-(``enable``, ``configure``). Per-joint control goes through :meth:`ArmJointGroup.motor`,
-or group-level shortcuts :meth:`ArmJointGroup.set_target_position` /
-:meth:`ArmJointGroup.get_state`.
+(``enable``, ``configure``). Per-joint control goes through :meth:`JointGroup.motor`,
+or group-level shortcuts :meth:`JointGroup.set_target_position` /
+:meth:`JointGroup.get_state`.
 
 YAML schema (full tables): ``YAML_CONFIG.md`` in the package root.
 
@@ -16,7 +16,7 @@ Configuration types
 -------------------
 
 Parsed by :func:`~agx_motor_sdk.mechanism.load_module_config` and exposed on each group as
-:attr:`ArmJointGroup.config`:
+:attr:`JointGroup.config`:
 
 * :class:`~agx_motor_sdk.mechanism.GroupConfig` — one module (``can_channel``,
   profile/MIT defaults, ``joints`` list).
@@ -51,60 +51,64 @@ compose those helpers and do not transform again.
 Per-joint motor API
 -------------------
 
-See :mod:`agx_motor_sdk.motor.arm_motor_base` for full method docs and parameter ranges.
+See :mod:`agx_motor_sdk.motor.motor_base` / :mod:`agx_motor_sdk.motor.arm_motor` / :mod:`agx_motor_sdk.motor.rb200_motor` for full method docs and parameter ranges.
 
 Quick start::
 
-    from agx_motor_sdk.mechanism import ArmJointGroup
+    from agx_motor_sdk.mechanism import JointGroup
 
-    head = ArmJointGroup.from_yaml("robot_motors.yaml", "head")
+    head = JointGroup.from_yaml("robot_motors.yaml", "head")
     head.connect()
     head.configure()
     head.enable()
 
     idx = head.index_of("head_pitch_joint")
-    if idx != ArmJointGroup.INVALID_JOINT_INDEX:
+    if idx != JointGroup.INVALID_JOINT_INDEX:
         head.motor(idx).set_target_position(0.5)
         state = head.get_state(idx)
 """
 
 from typing import Any, ClassVar, List, Optional
 
-from agx_motor_sdk._native import ArmJointGroup as _ArmJointGroup
+from agx_motor_sdk import _native
 from agx_motor_sdk._native import GroupConfig
 from agx_motor_sdk._native import JointConfig
-from agx_motor_sdk._native import JointGroupBase as _JointGroupBase
+from agx_motor_sdk._native import JointGroup as _JointGroup
 from agx_motor_sdk._native import JointState
-from agx_motor_sdk.motor.arm_motor_base import ArmMotorBase
+from agx_motor_sdk.motor.arm_motor import ArmMotor
+from agx_motor_sdk.motor.motor_base import MotorBase
+from agx_motor_sdk.motor.rb200_motor import Rb200Motor
 
 
-class ArmJointGroup:
-    """Arm-protocol (1 Mbps) YAML module controller.
+class JointGroup:
+    """YAML module controller (arm and RB200 joints, 1 Mbps CAN).
 
-    ``motor(index)`` returns :class:`~agx_motor_sdk.motor.arm_motor_base.ArmMotorBase`.
-    Joint-space units are rad and rad/s. Supports MIT control and motor parameters.
+    ``motor(index)`` returns :class:`~agx_motor_sdk.motor.ArmMotor` or
+    :class:`~agx_motor_sdk.motor.Rb200Motor` according to the joint ``protocol``.
+    Joint-space units are rad and rad/s. One module may mix both protocols on
+    the same CAN channel.
 
     Example::
 
-        group = ArmJointGroup.from_yaml("robot_motors.yaml", "head")
+        group = JointGroup.from_yaml("robot_motors.yaml", "head")
         group.connect()
         group.motor(0).set_mit(0.0, 0.0, 0.0)
     """
 
-    INVALID_JOINT_INDEX: ClassVar[int] = _JointGroupBase.INVALID_JOINT_INDEX
+    INVALID_JOINT_INDEX: ClassVar[int] = _JointGroup.INVALID_JOINT_INDEX
     """Sentinel returned by :meth:`index_of` when a joint name is unknown (always -1)."""
 
     def __init__(self, config: GroupConfig, can_channel: Optional[str] = None) -> None:
-        """Create an arm joint group from parsed config.
+        """Create a joint group from parsed config.
 
         Args:
             config: Parsed module configuration from :func:`load_module_config`.
             can_channel: Optional module default CAN channel override.
         """
         if can_channel is not None:
-            self._native = _ArmJointGroup(config, can_channel)
+            self._native = _JointGroup(config, can_channel)
         else:
-            self._native = _ArmJointGroup(config)
+            self._native = _JointGroup(config)
 
     @classmethod
     def from_yaml(
@@ -112,8 +116,8 @@ class ArmJointGroup:
         yaml_path: str,
         module_key: str,
         can_channel: Optional[str] = None,
-    ) -> "ArmJointGroup":
-        """Load an arm-protocol module from YAML.
+    ) -> "JointGroup":
+        """Load a module from YAML.
 
         Args:
             yaml_path: Path to robot motors YAML.
@@ -124,7 +128,7 @@ class ArmJointGroup:
             RuntimeError: On YAML load/parse errors.
         """
         obj = cls.__new__(cls)
-        obj._native = _ArmJointGroup.from_yaml(yaml_path, module_key, can_channel)
+        obj._native = _JointGroup.from_yaml(yaml_path, module_key, can_channel)
         return obj
 
     def connect(self) -> bool:
@@ -178,7 +182,7 @@ class ArmJointGroup:
 
     @property
     def protocol(self) -> str:
-        """Module protocol: always ``"arm"``."""
+        """Module default protocol: ``"arm"`` or ``"rb200"``."""
         return self._native.protocol
 
     @property
@@ -230,9 +234,21 @@ class ArmJointGroup:
         """Inject an external CAN port before :meth:`connect`."""
         self._native.attach_can_port(can_port, channel)
 
-    def motor(self, index: int) -> ArmMotorBase:
-        """Return an :class:`~agx_motor_sdk.motor.arm_motor_base.ArmMotorBase` for ``index``."""
-        return ArmMotorBase(self._native.motor(index))
+    def motor(self, index: int) -> MotorBase:
+        """Return the per-joint motor for ``index``.
+
+        Returns:
+            :class:`~agx_motor_sdk.motor.ArmMotor` for arm joints,
+            :class:`~agx_motor_sdk.motor.Rb200Motor` for RB200 joints, or a no-op
+            :class:`~agx_motor_sdk.motor.MotorBase` (``is_valid=False``) for an
+            invalid index.
+        """
+        native = self._native.motor(index)
+        if isinstance(native, _native.ArmMotor):
+            return ArmMotor(native)
+        if isinstance(native, _native.Rb200Motor):
+            return Rb200Motor(native)
+        return MotorBase(native)
 
     def set_mit(
         self,
@@ -241,12 +257,12 @@ class ArmJointGroup:
         velocity_rad_s: float,
         torque_nm: float,
     ) -> bool:
-        """Joint-space MIT command on one arm joint."""
+        """Joint-space MIT command on one arm joint (``False`` for RB200 joints)."""
         return bool(
             self._native.set_mit(index, position_rad, velocity_rad_s, torque_nm)
         )
 
 
 __all__ = [
-    "ArmJointGroup",
+    "JointGroup",
 ]

@@ -1,5 +1,9 @@
 #pragma once
 
+/* Common C ABI shared by every motor protocol library (documentation of the
+ * symbols resolved by ProtocolLibrary). Protocol-specific structs and symbols
+ * live in arm/arm_protocol_api.h and rb200/rb200_protocol_api.h. */
+
 #include <cstddef>
 #include <cstdint>
 
@@ -31,29 +35,6 @@ typedef struct {
 } AgxMotorHighSpeedFeedback;
 
 typedef struct {
-  uint8_t undervoltage;
-  uint8_t motor_overtemp;
-  uint8_t driver_overcurrent;
-  uint8_t driver_overtemp;
-  uint8_t collision_tripped;
-  uint8_t driver_error;
-  uint8_t enabled;
-  uint8_t stall_tripped;
-} AgxMotorDriverStatusBits;
-
-typedef struct {
-  float bus_voltage_v;
-  int16_t driver_temp_deg;
-  int8_t motor_temp_deg;
-  uint8_t pad0;
-  float bus_current;
-  uint8_t status_raw;
-  AgxMotorDriverStatusBits status;
-  uint8_t pad_tail[3];
-  uint64_t timestamp_ns;
-} AgxMotorLowSpeedFeedback;
-
-typedef struct {
   char software[64];
   char hardware[64];
   char motor[64];
@@ -63,9 +44,6 @@ typedef struct {
 int agx_motor_protocol_get_high_speed_feedback(
     AgxMotorProtocolHandle* handle, uint8_t node_id,
     AgxMotorHighSpeedFeedback* out);
-int agx_motor_protocol_get_low_speed_feedback(
-    AgxMotorProtocolHandle* handle, uint8_t node_id,
-    AgxMotorLowSpeedFeedback* out);
 
 int agx_motor_protocol_set_target(AgxMotorProtocolHandle* handle,
                                   uint8_t node_id, float value, uint8_t mode,
@@ -91,25 +69,6 @@ int agx_motor_protocol_set_profile_vel(AgxMotorProtocolHandle* handle,
 int agx_motor_protocol_set_current_limit(AgxMotorProtocolHandle* handle,
                                          uint8_t node_id, float current);
 
-/* arm protocol extensions */
-int agx_motor_protocol_set_mit_control(AgxMotorProtocolHandle* handle,
-                                       uint8_t node_id, float p_des,
-                                       float v_des, float kp, float kd,
-                                       float t_ff, float t_am);
-int agx_motor_protocol_set_mit_control_crc(AgxMotorProtocolHandle* handle,
-                                           uint8_t node_id, float p_des,
-                                           float v_des, float kp, float kd,
-                                           float t_ff, float t_am);
-int agx_motor_protocol_set_collision_threshold(AgxMotorProtocolHandle* handle,
-                                               uint8_t node_id,
-                                               float current_threshold,
-                                               float time_threshold);
-int agx_motor_protocol_get_param(AgxMotorProtocolHandle* handle,
-                                 uint8_t node_id, uint8_t idx1, uint8_t idx2,
-                                 float timeout_s, float* out);
-int agx_motor_protocol_set_param(AgxMotorProtocolHandle* handle,
-                                 uint8_t node_id, uint8_t idx1, uint8_t idx2,
-                                 float value, float timeout_s);
 int agx_motor_protocol_get_version(AgxMotorProtocolHandle* handle,
                                    uint8_t node_id, float timeout_s,
                                    AgxMotorVersionInfo* out);

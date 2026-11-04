@@ -17,7 +17,7 @@ head:
       upper_limit: 0.5
 ```
 
-Load with `ArmJointGroup.from_yaml("robot_motors.yaml", "head")`. Replace the
+Load with `JointGroup.from_yaml("robot_motors.yaml", "head")`. Replace the
 interface, node ID and limits to match your hardware. Loading YAML alone does not
 connect, enable a motor or apply motion settings.
 
@@ -29,6 +29,7 @@ Unknown keys are ignored, so check spelling carefully. Use `lower_limit` and
 | YAML key | Python attribute | Required | Default | Meaning |
 |----------|------------------|----------|---------|---------|
 | `can_channel` | `can_channel` | **Yes** | — | Default CAN interface name (e.g. `can0`). Joints may override. |
+| `protocol` | `protocol` | No | `arm` | Motor protocol: `arm` or `rb200`. Joints may override. |
 | `profile_vel` | `default_profile_vel_rad_s` | No | — | Default motion profile speed [rad/s] for joints without their own `profile_vel`. |
 | `profile_accel` | `profile_accel_rad_s2` | No | — | Default profile acceleration [rad/s²]. |
 | `profile_decel` | `profile_decel_rad_s2` | No | — | Default profile deceleration [rad/s²]. |
@@ -47,6 +48,7 @@ Unknown keys are ignored, so check spelling carefully. Use `lower_limit` and
 | `node_id` | **Yes** | — | CAN node ID (1–15). |
 | `polarity` | No | `1.0` | Per-joint linear coefficient: command `motor = joint / polarity`, feedback `joint = motor × polarity` (position, velocity, torque). Default `1.0`. `0` = pass-through. |
 | `can_channel` | No | `can_channel` | Per-joint bus override for multi-channel modules. |
+| `protocol` | No | `protocol` | Per-joint protocol override: `arm` or `rb200`. |
 | `profile_vel` | No | ✓ | Override profile speed [rad/s] for this joint. |
 | `profile_accel` | No | ✓ | Override profile acceleration [rad/s²]. |
 | `profile_decel` | No | ✓ | Override profile deceleration [rad/s²]. |
@@ -79,7 +81,7 @@ stops. Choose them for your mechanism and keep independent safety measures.
 
 ## Validation rules
 
-YAML loading and direct `ArmJointGroup` construction enforce the same rules:
+YAML loading and direct `JointGroup` construction enforce the same rules:
 
 - The module default `can_channel` must be non-empty and `joints` must be non-empty.
 - Each joint needs a non-empty name, unique within the group, and a node ID in `1..15`.
@@ -88,6 +90,8 @@ YAML loading and direct `ArmJointGroup` construction enforce the same rules:
   different channels is allowed.
 - Supplied module and joint numeric configuration values must be finite
   (no NaN or infinity), including polarity, torque factors and enabled limits.
+- `protocol` must be `arm` or `rb200`. Joints on one `can_channel` may mix
+  protocols.
 - If both limits are enabled, `lower_limit <= upper_limit`. A single limit is
   allowed. Finite `polarity: 0` retains its pass-through behavior.
 
@@ -132,8 +136,9 @@ Per-joint motor methods apply polarity and limits:
 - `motor.get_state()` — reads `get_high_speed_feedback()` and estimates torque
 - `motor.set_mit(p, v, t)` — delegates to `set_mit_control` (requires YAML `mit_*`)
 
-`ArmDriver` low-level APIs use motor-space values; the per-joint `ArmMotorBase`
-API applies polarity.
+Driver low-level APIs (`ArmDriver`, `Rb200Driver`) use motor-space values; the
+per-joint motor API (`MotorBase` and its `ArmMotor` / `Rb200Motor` subclasses)
+applies polarity. MIT methods exist only on `ArmMotor`.
 
 ## Topology
 
@@ -142,6 +147,10 @@ API applies polarity.
   Across groups, the same pair addresses the same motor. Avoid conflicting
   configurations or commands for that motor; prefer one group per physical joint.
 - One module may use multiple channels via per-joint `can_channel`.
+- One CAN channel may carry both protocols. The SDK shares the socket and routes
+  received frames by node ID (low 4 bits of the CAN ID) to the protocol of that
+  node. Connecting a group fails if another live group already uses the same
+  `(can_channel, node_id)` with a different protocol.
 
 Stop motor commands before closing a group. If you supplied an external CAN port,
 close it yourself after all users have stopped using it.
@@ -172,7 +181,7 @@ See also `examples/mechanism/robot_motors.yaml`.
   name is not in the group. It does not raise.
 - `is_valid_joint_index(index)` checks whether `index` is in `[0, joint_count)`.
 - `motor(index)` never raises for out-of-range or invalid indices. It returns a
-  no-op motor (`is_valid=False`) that implements `ArmMotorBase`. All calls return
+  no-op `MotorBase` (`is_valid=False`). All calls return
   `False` / `None` and do not touch the CAN bus.
 - Valid indices still require `connect()` (or an attached CAN port) before bus
   operations succeed.

@@ -29,7 +29,10 @@ Installed libraries are normally found automatically. For a custom location:
 
 ```bash
 export AGX_MOTOR_SDK_ARM_LIB=/absolute/path/to/libagx_motor_protocol_arm.so
+export AGX_MOTOR_SDK_RB200_LIB=/absolute/path/to/libagx_motor_protocol_rb200.so
 ```
+
+`ArmDriver` loads only the arm library and `Rb200Driver` only the RB200 library.
 
 A library in the current working directory's `protocol/` folder is not searched
 automatically. Ensure the library matches your CPU architecture.
@@ -81,7 +84,7 @@ driver queries from receive callbacks; the callback must return to receive repli
 - If you supplied an external port, close it yourself after all its users have
   stopped. Groups and Python drivers keep supplied ports alive until replacement
   or destruction, including after `close()`.
-- With C++ `ArmDriver(CanPort*)`, keep the port alive until the driver is closed
+- With C++ `ArmDriver(CanPort*)` / `Rb200Driver(CanPort*)`, keep the port alive until the driver is closed
   or destroyed.
 - Keep callbacks short. Removing or replacing a SocketCAN callback may wait for
   an active callback to finish; callbacks may unregister themselves.
@@ -95,17 +98,25 @@ These are optional; the standard installation does not need overrides.
 
 | Variable | Purpose |
 |----------|---------|
-| `AGX_MOTOR_SDK_ARM_LIB` | Absolute path to a custom protocol library |
+| `AGX_MOTOR_SDK_ARM_LIB` | Absolute path to a custom arm protocol library |
+| `AGX_MOTOR_SDK_RB200_LIB` | Absolute path to a custom RB200 protocol library |
 | `AGX_MOTOR_SDK_CAN_BACKEND` | `cpp` (default) or `python-can` |
 | `AGX_MOTOR_SDK_SKIP_DOWNLOAD` | Set to `1` for explicit offline installation |
 | `AGX_MOTOR_SDK_PROTOCOL_VERSION` | Protocol version used in asset name and default tag |
 | `AGX_MOTOR_SDK_PROTOCOL_TAG` | Override release tag only, not the asset version |
+| `AGX_MOTOR_SDK_RB200_PROTOCOL_VERSION` | RB200 protocol version used in asset name and default tag |
+| `AGX_MOTOR_SDK_RB200_PROTOCOL_TAG` | Override RB200 release tag only, not the asset version |
+| `AGX_MOTOR_SDK_REQUIRE_RB200` | Set to `1` to fail installation when the RB200 library cannot be fetched |
 | `AGX_MOTOR_SDK_GITHUB_REPO` | Binary release repository; default `kehuanjack/agx_motor_protocol_releases` |
 | `AGX_MOTOR_SDK_GITHUB_TOKEN` | Release read-access token; falls back to `GH_TOKEN`, then `GITHUB_TOKEN` |
 
 The default protocol version is selected by the SDK independently of its own
 version. Releases use tag `arm-can-v{version}` and asset
-`agx-arm-can-v{version}-linux-{arch}.so`. Configure tokens in your environment or
+`agx-arm-can-v{version}-linux-{arch}.so`. The RB200 library uses tag
+`rb200-can-v{version}` and asset `agx-rb200-can-v{version}-linux-{arch}.so`; its
+version is `__rb200_protocol_version__` in `agx_motor_sdk/version.py`. The RB200
+download is optional: if it fails, installation continues with a warning unless
+`AGX_MOTOR_SDK_REQUIRE_RB200=1`. Configure tokens in your environment or
 CI secret store, never in source files. Private releases require repository read access.
 
 `AGX_MOTOR_SDK_FETCH_PROTOCOL` is a **CMake option**, not an environment variable.

@@ -8,15 +8,22 @@
 
 namespace agx::motor::mechanism {
 
-/// Motor firmware protocol (arm only).
+/// Motor firmware protocol, selected per joint via YAML ``protocol``.
 enum class Protocol {
-  kArm,  ///< 1 Mbps CAN; joint position [rad], velocity [rad/s].
+  kArm,    ///< 1 Mbps CAN; joint position [rad], velocity [rad/s].
+  kRb200,  ///< RB200 driver: arm frame set, CiA402 low-speed feedback (0x530+id).
 };
 
-/// @return ``"arm"`` for logging / Python ``protocol`` property.
+/// @return ``"arm"`` or ``"rb200"`` for logging / Python ``protocol`` property.
 inline const char* ProtocolToString(Protocol protocol) {
-  (void)protocol;
-  return "arm";
+  return protocol == Protocol::kRb200 ? "rb200" : "arm";
+}
+
+/// Parse a YAML protocol name (``arm`` / ``rb200``); nullopt if unknown.
+inline std::optional<Protocol> ProtocolFromString(const std::string& name) {
+  if (name == "arm") return Protocol::kArm;
+  if (name == "rb200") return Protocol::kRb200;
+  return std::nullopt;
 }
 
 /// @return true if ``index`` is a valid zero-based joint index for ``joint_count``.
@@ -24,7 +31,7 @@ inline bool IsJointIndexInRange(int index, std::size_t joint_count) {
   return index >= 0 && static_cast<std::size_t>(index) < joint_count;
 }
 
-/// Sentinel returned by ``JointGroupBase::IndexOf`` when a joint name is unknown.
+/// Sentinel returned by ``JointGroup::IndexOf`` when a joint name is unknown.
 constexpr int kInvalidJointIndex = -1;
 
 /// Cached joint-space feedback returned by motor ``GetState`` [rad, rad/s, N·m].
@@ -40,6 +47,9 @@ struct JointConfig {
   uint8_t node_id{0};  ///< CAN node ID (1–15).
   /// Resolved CAN channel (per-joint override or module ``can_channel`` default).
   std::string can_channel;
+  /// Resolved motor protocol (per-joint override or module ``protocol`` default).
+  /// All joints on one CAN channel must use the same protocol.
+  Protocol protocol{Protocol::kArm};
   /// Per-joint linear coefficient for position, velocity, and torque:
   /// command ``motor = joint / polarity``, feedback ``joint = motor * polarity``.
   /// Default ``1.0``. ``0`` = pass-through.
@@ -72,6 +82,8 @@ struct JointConfig {
 struct GroupConfig {
   /// Default CAN channel for joints without per-joint ``can_channel``.
   std::string can_channel;
+  /// Module default protocol for joints without per-joint ``protocol``.
+  Protocol protocol{Protocol::kArm};
   /// Module default profile speed [rad/s].
   std::optional<float> default_profile_vel_rad_s;
   /// Module default profile acceleration [rad/s²].

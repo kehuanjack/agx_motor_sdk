@@ -7,7 +7,9 @@ connection, start with [README](README.md). For joint settings, use
 | Area | Reference |
 |------|-----------|
 | Joint groups and per-joint control | [Mechanism layer](#mechanism-layer) |
-| Single-motor commands and parameters | [ArmDriver](#armdriver-arm-protocol-1-mbps) |
+| Commands shared by all protocols | [MotorDriver](#motordriver-common-driver-api) |
+| Arm protocol: `ArmDriver`, `ArmMotor`, MIT, parameters | [API_ARM.md](docs/API_ARM.md) |
+| RB200 protocol: `Rb200Driver`, `Rb200Motor`, CiA402 status | [API_RB200.md](docs/API_RB200.md) |
 | Feedback fields | [Shared types](#shared-types) |
 | Port options and callbacks | [CAN transport](#can-transport) |
 | Equivalent C++ method names | [Naming map](#c--python-naming-map) |
@@ -21,16 +23,31 @@ do not request device replies. Blocking queries can return empty on timeout or
 failure. A successful send-only call does not prove that the motor executed it.
 Closing a driver or group does not disable motors.
 
+Each protocol has its own driver and per-joint motor class. Code shared by all
+protocols lives in the base classes `MotorDriver` and `MotorBase`; protocol extras
+live only in the subclass (for example MIT exists on `ArmMotor` but not on
+`Rb200Motor`). `get_low_speed_feedback()` / `GetLowSpeedState()` has the same name
+in every protocol class and returns that protocol's own feedback type.
+
+| Protocol | Driver | Per-joint motor | Low-speed feedback | Reference |
+|----------|--------|-----------------|--------------------|-----------|
+| `arm` | `ArmDriver` | `ArmMotor` | `LowSpeedFeedback` / `LowSpeedState` | [API_ARM.md](docs/API_ARM.md) |
+| `rb200` | `Rb200Driver` | `Rb200Motor` | `Rb200LowSpeedFeedback` / `Rb200LowSpeedState` | [API_RB200.md](docs/API_RB200.md) |
+
 ---
 
 ## Python package exports
 
 ```python
 from agx_motor_sdk import (
-    ArmDriver,
+    MotorDriver,             # common base
+    ArmDriver,               # arm protocol
+    Rb200Driver,             # RB200 protocol
+    Cia402Status,
     DriverStatus,
     HighSpeedFeedback,
     LowSpeedFeedback,
+    Rb200LowSpeedFeedback,
     VersionInfo,
     create_can_port,
     create_can_port_config,
@@ -38,38 +55,44 @@ from agx_motor_sdk import (
 )
 ```
 
-C++ headers live under `include/agx_motor_sdk/`; namespace `agx::motor`.
+C++ headers live under `include/agx_motor_sdk/`; namespace `agx::motor`
+(drivers) and `agx::mechanism` (joint groups).
+
+| Layer | Common | Arm | RB200 |
+|-------|--------|-----|-------|
+| Driver | `motor/motor_driver.hpp` | `motor/arm/arm_driver.hpp` | `motor/rb200/rb200_driver.hpp` |
+| Per-joint motor | `mechanism/motor_base.hpp` | `mechanism/arm/arm_motor.hpp` | `mechanism/rb200/rb200_motor.hpp` |
+| Python | `motor/motor_driver.py`, `motor/motor_base.py` | `motor/arm_driver.py`, `motor/arm_motor.py` | `motor/rb200_driver.py`, `motor/rb200_motor.py` |
 
 ---
 
 ## Mechanism layer
 
-YAML-driven joint groups for multi-joint modules (`head`, `fold`, …). One module = one `ArmJointGroup`. Schema: [YAML_CONFIG.md](YAML_CONFIG.md). Examples: `examples/mechanism/`.
+YAML-driven joint groups for multi-joint modules (`head`, `fold`, …). One module = one `JointGroup`; joints may use different protocols. Schema: [YAML_CONFIG.md](YAML_CONFIG.md). Examples: `examples/mechanism/`.
 
 ### Python imports
 
 ```python
 from agx_motor_sdk.mechanism import (
-    ArmJointGroup,
+    JointGroup,
     GroupConfig,
     JointConfig,
     JointState,
     load_module_config,
     joint_names_from_config,
 )
-from agx_motor_sdk.motor import ArmMotorBase
+from agx_motor_sdk.motor import MotorBase, ArmMotor, Rb200Motor
 ```
 
 ### Construction
 
 | Python | C++ |
 |--------|-----|
-| `ArmJointGroup(config)` | `ArmJointGroup(config)` |
-| `ArmJointGroup(config, can_channel)` | `ArmJointGroup(config, can_channel)` |
-| `ArmJointGroup.from_yaml(path, key)` | `ArmJointGroup::FromYaml(path, key)` |
-| `ArmJointGroup.from_yaml(path, key, can)` | `ArmJointGroup::FromYaml(path, key, can)` |
-| — | `CreateJointGroup(config)` → `unique_ptr<JointGroupBase>` (always `ArmJointGroup`) |
-| — | `CreateArmJointGroup` |
+| `JointGroup(config)` | `JointGroup(config)` |
+| `JointGroup(config, can_channel)` | `JointGroup(config, can_channel)` |
+| `JointGroup.from_yaml(path, key)` | `JointGroup::FromYaml(path, key)` |
+| `JointGroup.from_yaml(path, key, can)` | `JointGroup::FromYaml(path, key, can)` |
+| — | `CreateJointGroup(config[, can])` → `unique_ptr<JointGroup>` |
 | — | `CreateJointGroupFromYaml(path, key[, can])` |
 
 YAML loading and direct group construction both validate configuration. See
@@ -80,13 +103,15 @@ YAML loading and direct group construction both validate configuration. See
 
 | Symbol | C++ | Python | Value |
 |--------|-----|--------|-------|
-| Invalid index | `kInvalidJointIndex` (`types.hpp`) | `INVALID_JOINT_INDEX` on `ArmJointGroup` | `-1` |
+| Invalid index | `kInvalidJointIndex` (`types.hpp`) | `INVALID_JOINT_INDEX` on `JointGroup` | `-1` |
 
 - `index_of(name)` → index or `INVALID_JOINT_INDEX`.
 - `is_valid_joint_index(index)` → `index ∈ [0, joint_count)`.
-- `motor(index)` never raises: out-of-range returns a no-op `ArmMotorBase` with `is_valid=False`.
+- `motor(index)` never raises: out-of-range returns a no-op `MotorBase` with `is_valid=False`.
+- A valid index returns the joint's protocol class: `ArmMotor` or `Rb200Motor`.
+  Check with `isinstance` before calling protocol-only methods.
 
-### Group methods (`ArmJointGroup`)
+### Group methods (`JointGroup`)
 
 | Method | C++ | Description |
 |--------|-----|-------------|
@@ -98,7 +123,7 @@ YAML loading and direct group construction both validate configuration. See
 | `configure()` | `Configure` | Apply YAML profile / MIT to all joints |
 | `joint_count` | `JointCount` | Number of joints |
 | `joint_names` | `JointNames` | Names in YAML order |
-| `protocol` | `protocol()` | Always `"arm"` |
+| `protocol` | `protocol()` | Module default protocol: `"arm"` or `"rb200"` (joints may override) |
 | `can_channel` | `can_channel()` | Module default channel |
 | `can_channels` | `CanChannels` | Distinct channels used by joints |
 | `config` | `config()` | `GroupConfig` |
@@ -109,29 +134,44 @@ YAML loading and direct group construction both validate configuration. See
 | `joint_config(i)` | `GetJointConfig` | `JointConfig` |
 | `set_target_position(i, pos)` | `SetTargetPosition` | Joint-space position [rad] (limits + polarity) |
 | `get_state(i)` | `GetState` | `JointState` or `None` |
-| `motor(index)` | `MotorArm` | `ArmMotorBase` (invalid index → no-op) |
-| `set_mit(i, pos, vel, torque)` | `SetMit` | Joint-space MIT; needs YAML `mit_tf` / `mit_kp` / `mit_kd` |
+| `motor(index)` | `Motor` | `ArmMotor` / `Rb200Motor` by joint protocol; invalid index → no-op `MotorBase` |
+| `set_mit(i, pos, vel, torque)` | `SetMit` | Joint-space MIT (arm joints only; `False` for RB200); needs YAML `mit_tf` / `mit_kp` / `mit_kd` |
 
 The group keeps supplied ports alive until replacement or group destruction, even
 after `close()`. Close external ports yourself after all users have stopped using
 them. Stop motor commands before closing the group.
 See [safe shutdown](docs/ADVANCED.md#safe-shutdown).
 
-### Per-joint motor view (`ArmMotorBase`)
+### Per-joint motor view (`MotorBase`)
 
-Wraps one joint with joint-space helpers plus `ArmDriver` methods.
+Wraps one joint with joint-space helpers (limits and polarity). These methods exist
+on every protocol; protocol extras are in [ArmMotor](docs/API_ARM.md#per-joint-motor-armmotor)
+and [Rb200Motor](docs/API_RB200.md#per-joint-motor-rb200motor).
 
-| Method | Description |
-|--------|-------------|
-| `is_valid` | `True` for a real joint index |
-| `protocol`, `node_id`, `can_channel`, `name`, `config` | Metadata |
-| `set_enable([timeout])` | Enable motor |
-| `set_target_position(pos)` | Joint-space position [rad] (limits + polarity) |
-| `set_target_velocity(vel)` | Joint-space velocity [rad/s] (polarity) |
-| `get_state()` | `JointState` (position, velocity, torque with polarity) |
-| `configure()` | Apply this joint's YAML |
-| `get_high_speed_feedback()` / `get_low_speed_feedback()` | Cached joint-space high-speed feedback; low-speed is raw driver cache |
-| `set_mit`, `get_version`, `set_target_current`, `set_mit_control` / `set_mit_control_crc`, `set_collision_threshold`, `get_param` / `set_param` | See [ArmDriver](#armdriver-arm-protocol-1-mbps) |
+| Method | C++ | Description |
+|--------|-----|-------------|
+| `is_valid` | `IsValid` | `True` for a real joint index |
+| `protocol`, `node_id`, `can_channel`, `name`, `config` | `protocol`, `NodeId`, `CanChannel`, `Name`, `Config` | Metadata |
+| `set_enable(enable=True, ...)` | `SetEnable` | Enable or disable motor |
+| `set_target(value, mode)` | `SetTarget` | Generic target; mode 0=velocity, 1=position |
+| `set_target_position(pos)` | `SetTargetPosition` | Joint-space position [rad] (limits + polarity) |
+| `set_target_velocity(vel)` | `SetTargetVelocity` | Joint-space velocity [rad/s] (polarity) |
+| `get_state()` | `GetState` | `JointState` (position, velocity, torque with polarity) |
+| `configure()` | `Configure` | Apply this joint's YAML (arm also syncs `mit_tf`) |
+| `get_high_speed_feedback()` | `GetHighSpeedState` | Cached joint-space position, velocity, current |
+| `get_version()` | `GetVersion` | Firmware version (blocking) |
+| `set_reset`, `set_clear_error`, `set_zero_offset` | `SetReset`, `SetClearError`, `SetZeroOffset` | See [MotorDriver](#motordriver-common-driver-api) |
+| `set_profile_acc_dec`, `set_profile_vel`, `set_current_limit` | `SetProfileAccDec`, `SetProfileVelocity`, `SetCurrentLimit` | Profile and limits |
+
+```python
+from agx_motor_sdk.motor import ArmMotor, Rb200Motor
+
+m = group.motor(group.index_of("lift_j1"))
+if isinstance(m, Rb200Motor):
+    fb = m.get_low_speed_feedback()      # Rb200LowSpeedFeedback or None
+elif isinstance(m, ArmMotor):
+    fb = m.get_low_speed_feedback()      # LowSpeedFeedback or None
+```
 
 For a checked, read-only example, see [joint groups](README.md#joint-groups).
 Motion examples are listed in [README](README.md#examples).
@@ -146,22 +186,22 @@ Motion examples are listed in [README](README.md#examples).
 | `Close` | `close` | Driver: stop use of the port without closing it; may wait for active RX callback |
 | `HandleRxOnce` | `handle_rx_once` | Manual RX when not using port callback |
 | `GetHighSpeedState` | `get_high_speed_feedback` | Cached read; non-blocking |
-| `GetLowSpeedState` | `get_low_speed_feedback` | Cached read; non-blocking |
+| `GetLowSpeedState` | `get_low_speed_feedback` | Cached read; returns the protocol's own type |
 | `GetVersion` | `get_version` | Blocking |
 | `SetEnable` | `set_enable` | |
 | `SetTargetVelocity` | `set_target_velocity` | |
 | `SetTargetPosition` | `set_target_position` | |
-| `SetTargetCurrent` | `set_target_current` | |
+| `SetTargetCurrent` | `set_target_current` | Arm only |
 | `SetReset` | `set_reset` | |
 | `SetClearError` | `set_clear_error` | |
 | `SetZeroOffset` | `set_zero_offset` | |
 | `SetProfileAccDec` | `set_profile_acc_dec` | |
 | `SetProfileVelocity` | `set_profile_vel` | |
 | `SetCurrentLimit` | `set_current_limit` | |
-| `SetMitControl` | `set_mit_control` | |
-| `SetMitControlCrc` | `set_mit_control_crc` | |
-| `SetCollisionThreshold` | `set_collision_threshold` | |
-| `GetParam` / `SetParam` | `get_param` / `set_param` | `ArmDriver.MotorParam` |
+| `SetMitControl` | `set_mit_control` | Arm only |
+| `SetMitControlCrc` | `set_mit_control_crc` | Arm only |
+| `SetCollisionThreshold` | `set_collision_threshold` | Arm only |
+| `GetParam` / `SetParam` | `get_param` / `set_param` | Arm only; `ArmDriver.MotorParam` |
 | `CreateSocketCanPort` | `create_can_port` | Factory; see CAN layer below |
 
 ---
@@ -175,7 +215,7 @@ Motion examples are listed in [README](README.md#examples).
 | `CanFrame` | `id`, `data`, `timestamp_ns` |
 | `DriverStatusBits` | `undervoltage`, `motor_overtemp`, `driver_overcurrent`, `driver_overtemp`, `collision_tripped`, `driver_error`, `enabled`, `stall_tripped` |
 | `HighSpeedState` | `position`, `velocity`, `current`, `timestamp_ns` — [rad], [rad/s] |
-| `LowSpeedState` | `bus_voltage_v`, `driver_temp_deg`, `motor_temp_deg`, `bus_current`, `status_raw`, `status`, `timestamp_ns` |
+| `LowSpeedState` (arm) | `bus_voltage_v`, `driver_temp_deg`, `motor_temp_deg`, `bus_current`, `status_raw`, `status`, `timestamp_ns` |
 | `VersionInfo` | `software`, `hardware`, `motor`, `timestamp_ns` |
 
 ### Python (`NamedTuple`)
@@ -184,8 +224,11 @@ Motion examples are listed in [README](README.md#examples).
 |------|--------|
 | `DriverStatus` | Same booleans as `DriverStatusBits` |
 | `HighSpeedFeedback` | `position`, `velocity`, `current`, `timestamp` [s] |
-| `LowSpeedFeedback` | `bus_voltage_v`, `driver_temp_deg`, `motor_temp_deg`, `bus_current`, `status_raw`, `status`, `timestamp` [s] |
+| `LowSpeedFeedback` (arm) | `bus_voltage_v`, `driver_temp_deg`, `motor_temp_deg`, `bus_current`, `status_raw`, `status`, `timestamp` [s] |
 | `VersionInfo` | `software`, `hardware`, `motor`, `timestamp` [s] |
+
+RB200 types (`Rb200LowSpeedState`, `Cia402StatusBits` / Python `Rb200LowSpeedFeedback`,
+`Cia402Status`) are listed in [API_RB200.md](docs/API_RB200.md#feedback-types).
 
 Cached feedback returns empty when no matching frame has been received yet.
 
@@ -243,73 +286,38 @@ Include `agx_motor_sdk/can/can_port.hpp`. Create a port with
 For callback restrictions and external ports, see
 [safe shutdown](docs/ADVANCED.md#safe-shutdown).
 
----
+## `MotorDriver` (common driver API)
 
-## `ArmDriver` (arm protocol, 1 Mbps)
-
-Units: position [rad], velocity [rad/s], current [A], profile acc/dec [rad/s²].
-
-### Construction
-
-```python
-driver = ArmDriver(can_port)          # Python
-```
-
-```cpp
-auto driver = std::make_unique<agx::motor::ArmDriver>(can.get());  // C++
-```
+`MotorDriver` is the base class of `ArmDriver` and `Rb200Driver`. Construct a
+protocol driver, not `MotorDriver` itself. Units: position [rad], velocity [rad/s],
+current [A], profile acc/dec [rad/s²].
 
 Pass an opened CAN port to send commands and receive feedback. With C++
-`ArmDriver(CanPort*)`, keep the port alive until the driver is closed or destroyed.
-The Python driver keeps its supplied port alive until replacement or destruction,
-including after `close()`. Neither driver `close()` closes that port.
-One `ArmDriver` per arm-protocol bus is typical.
-
-### Motor parameters (`ArmDriver.MotorParam`)
-
-| C++ | Python | Meaning |
-|-----|--------|---------|
-| `kId` | `ID` | Node ID (1–15) |
-| `kAc` | `AC` | Profile acceleration [rad/s²], max 12.56 |
-| `kDc` | `DC` | Profile deceleration [rad/s²], max 12.56 |
-| `kVv` | `VV` | Profile velocity [rad/s], max 20 |
-| `kIq` | `IQ` | Torque-loop current limit [A], max 12 |
-| `kOi` | `OI` | Collision protection current [A], max 12 |
-| `kOt` | `OT` | Collision protection time [s], max 2 |
-| `kTx` | `TX` | Fast feedback: 0=push, 1=response |
-| `kTf` | `TF` | MIT torque limit [N·m], default ±8 |
-| `kSo` | `SO` | Zero offset [rad] |
-| `kPp` | `PP` | Position Kp |
-| `kKp` | `KP` | Velocity Kp |
-| `kKi` | `KI` | Velocity Ki |
-
-### Methods
+`ArmDriver(CanPort*)` / `Rb200Driver(CanPort*)`, keep the port alive until the driver
+is closed or destroyed. The Python driver keeps its supplied port alive until
+replacement or destruction, including after `close()`. Neither driver `close()`
+closes that port. Use one driver per protocol per bus; arm and RB200 drivers may
+share one port.
 
 | Method | Blocking | Description |
 |--------|----------|-------------|
+| `protocol` / `protocol_name()` | no | `"arm"` or `"rb200"` |
 | `attach_can_port` / `AttachCanPort` | RX wait possible | Bind CAN TX/RX; replacing a port may wait for its active callback |
 | `close` / `Close` | RX wait possible | Stop driver operation; no device ACK wait; port remains open |
 | `handle_rx_once` / `HandleRxOnce` | no | Parse one frame manually |
 | `get_high_speed_feedback` / `GetHighSpeedState` | no | Cached position, velocity, current |
-| `get_low_speed_feedback` / `GetLowSpeedState` | no | Cached voltage, temps, status |
+| `get_low_speed_feedback` / `GetLowSpeedState` | no | Defined per protocol; see [arm](docs/API_ARM.md) / [RB200](docs/API_RB200.md) |
 | `get_version` / `GetVersion` | yes | Firmware version strings |
 | `set_enable` / `SetEnable` | no | Enable/disable; optional brake args |
+| `set_target` / `SetTarget` | no | Generic target with explicit mode byte |
 | `set_target_velocity` / `SetTargetVelocity` | no | Velocity mode [rad/s] |
 | `set_target_position` / `SetTargetPosition` | no | Position mode [rad] |
-| `set_target_current` / `SetTargetCurrent` | no | Current mode [A] |
 | `set_reset` / `SetReset` | optional | `mode`: 0=reset, 1=cal enter, 2=cal save |
 | `set_clear_error` / `SetClearError` | optional | Clear faults |
 | `set_zero_offset` / `SetZeroOffset` | optional | Zero offset [rad]; `save_to_flash` |
 | `set_profile_acc_dec` / `SetProfileAccDec` | no | Profile acc/dec [rad/s²] |
 | `set_profile_vel` / `SetProfileVelocity` | no | Profile velocity cap [rad/s] |
 | `set_current_limit` / `SetCurrentLimit` | no | Phase current limit [A] |
-| `set_mit_control` / `SetMitControl` | no | MIT control (no CRC); clamps in library |
-| `set_mit_control_crc` / `SetMitControlCrc` | no | MIT control with CRC |
-| `set_collision_threshold` / `SetCollisionThreshold` | no | Collision current [A] and time [s] |
-| `get_param` / `GetParam` | yes | Read parameter |
-| `set_param` / `SetParam` | yes | Write parameter |
-
-**MIT limits** (library-side): `p_des` ∈ [-12.5, 12.5] rad; `v_des` ∈ [-45, 45] rad/s; `kp` ∈ [0, 500]; `kd` ∈ [-5, 5]; `t_ff` mapped by `t_am` (default 16 without CRC, 8 with CRC).
 
 ---
 

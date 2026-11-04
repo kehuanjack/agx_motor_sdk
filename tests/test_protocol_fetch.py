@@ -37,6 +37,9 @@ class ProtocolFetchTests(unittest.TestCase):
         platform_patch = patch.object(protocol_fetch.sys, "platform", "linux")
         platform_patch.start()
         self.addCleanup(platform_patch.stop)
+        variants = patch.object(protocol_fetch, "_VARIANTS", ("arm",))
+        variants.start()
+        self.addCleanup(variants.stop)
 
     def metadata(self, digest=None):
         digest = hashlib.sha256(self.payload).hexdigest() if digest is None else digest
@@ -260,6 +263,92 @@ class ProtocolFetchTests(unittest.TestCase):
         with patch.object(protocol_fetch, "urlopen") as network:
             protocol_fetch.download_protocol_libs_if_needed()
         network.assert_not_called()
+
+
+def _missing_release():
+    return HTTPError("https://api.github.com", 404, "missing", {}, None)
+
+
+class Rb200ProtocolFetchTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "agx_motor_sdk").mkdir()
+        (self.root / "agx_motor_sdk/version.py").write_text(
+            '__version__ = "9.9.9"\n__protocol_version__ = "1.2.3"\n__rb200_protocol_version__ = "2.0.0"\n'
+        )
+        self.protocol_dir = self.root / "agx_motor_sdk/protocol"
+        self.payloads = {"arm": b"arm binary", "rb200": b"rb200 binary"}
+        self.assets = {
+            "arm": "agx-arm-can-v1.2.3-linux-x86_64.so",
+            "rb200": "agx-rb200-can-v2.0.0-linux-x86_64.so",
+        }
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        for replacement in (
+            patch.object(protocol_fetch, "_ROOT", self.root),
+            patch.object(protocol_fetch, "_host_platform_arch", return_value=("linux", "x86_64")),
+            patch.object(protocol_fetch.sys, "platform", "linux"),
+        ):
+            replacement.start()
+            self.addCleanup(replacement.stop)
+
+    def metadata(self, variant):
+        digest = hashlib.sha256(self.payloads[variant]).hexdigest()
+        return io.BytesIO(json.dumps({
+            "body": "<!-- AGX_MOTOR_SDK_PROTOCOL_SHA256 -->\n```json\n"
+            + json.dumps({self.assets[variant]: digest}) + "\n```",
+        }).encode())
+
+    def arm_then_missing_rb200(self):
+        return [self.metadata("arm"), io.BytesIO(self.payloads["arm"]), _missing_release()]
+
+    def test_fetches_both_variants_with_own_tags(self):
+        responses = [self.metadata("arm"), io.BytesIO(self.payloads["arm"]),
+                     self.metadata("rb200"), io.BytesIO(self.payloads["rb200"])]
+        with patch.object(protocol_fetch, "urlopen", side_effect=responses) as network:
+            protocol_fetch.download_protocol_libs_if_needed()
+        self.assertEqual(
+            network.call_args_list[2].args[0].full_url,
+            "https://api.github.com/repos/kehuanjack/agx_motor_protocol_releases/releases/tags/rb200-can-v2.0.0",
+        )
+        self.assertEqual(
+            network.call_args_list[3].args[0],
+            "https://github.com/kehuanjack/agx_motor_protocol_releases/releases/download/rb200-can-v2.0.0/"
+            + self.assets["rb200"],
+        )
+        self.assertEqual((self.protocol_dir / "libagx_motor_protocol_arm.so").read_bytes(), self.payloads["arm"])
+        self.assertEqual((self.protocol_dir / "libagx_motor_protocol_rb200.so").read_bytes(), self.payloads["rb200"])
+
+    def test_rb200_version_and_tag_overrides(self):
+        os.environ.update(AGX_MOTOR_SDK_RB200_PROTOCOL_VERSION="3.1.0", AGX_MOTOR_SDK_RB200_PROTOCOL_TAG="rb/tag")
+        self.assertEqual(protocol_fetch._read_protocol_version("rb200"), "3.1.0")
+        self.assertEqual(protocol_fetch._read_protocol_version("arm"), "1.2.3")
+        with patch.object(protocol_fetch, "urlopen", side_effect=self.arm_then_missing_rb200()) as network, \
+                patch("sys.stderr", new_callable=io.StringIO):
+            protocol_fetch.download_protocol_libs_if_needed()
+        self.assertTrue(network.call_args_list[2].args[0].full_url.endswith("/releases/tags/rb%2Ftag"))
+
+    def test_missing_rb200_release_is_optional(self):
+        with patch.object(protocol_fetch, "urlopen", side_effect=self.arm_then_missing_rb200()), \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            protocol_fetch.download_protocol_libs_if_needed()
+        self.assertIn("skip optional rb200", stderr.getvalue())
+        self.assertTrue((self.protocol_dir / "libagx_motor_protocol_arm.so").is_file())
+        self.assertFalse((self.protocol_dir / "libagx_motor_protocol_rb200.so").exists())
+
+    def test_missing_rb200_release_fails_when_required(self):
+        os.environ["AGX_MOTOR_SDK_REQUIRE_RB200"] = "1"
+        with patch.object(protocol_fetch, "urlopen", side_effect=self.arm_then_missing_rb200()), \
+                self.assertRaisesRegex(RuntimeError, "rb200-can-v2.0.0"):
+            protocol_fetch.download_protocol_libs_if_needed()
+
+    def test_arm_failure_stays_fatal(self):
+        with patch.object(protocol_fetch, "urlopen", side_effect=[_missing_release()]), \
+                self.assertRaisesRegex(RuntimeError, "arm-can-v1.2.3"):
+            protocol_fetch.download_protocol_libs_if_needed()
 
 
 @unittest.skipUnless(shutil.which("cmake"), "cmake is unavailable")

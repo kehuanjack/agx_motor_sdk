@@ -1,5 +1,7 @@
 #include "agx_motor_sdk/can/can_port.hpp"
-#include "agx_motor_sdk/mechanism/arm_motor.hpp"
+#include "agx_motor_sdk/mechanism/arm/arm_motor.hpp"
+#include "agx_motor_sdk/mechanism/rb200/rb200_motor.hpp"
+#include "agx_motor_sdk/motor/rb200/rb200_driver.hpp"
 #include "agx_motor_sdk/mechanism/can_bus.hpp"
 #include "agx_motor_sdk/mechanism/motor_registry.hpp"
 
@@ -34,6 +36,9 @@ class FakeCanPort final : public CanPort {
     if (!handler) ++stats_->detached;
     handler_ = std::move(handler);
   }
+  void Inject(const CanFrame& frame) {
+    if (handler_) handler_(frame);
+  }
  private:
   std::shared_ptr<PortStats> stats_;
   bool opened_{false};
@@ -51,7 +56,8 @@ JointConfig Config() {
   return config;
 }
 
-void CheckExpired(ArmMotor& motor) {
+void CheckExpired(MotorBase& base) {
+  auto& motor = dynamic_cast<ArmMotor&>(base);
   Require(!motor.SetEnable(), "expired enable");
   Require(!motor.Configure(), "expired configure");
   Require(!motor.SetMit(0.f, 0.f, 0.f), "expired MIT");
@@ -105,13 +111,13 @@ void CheckProtocolLifecycle() {
   std::weak_ptr<CanPort> weak_port = port;
   auto bus = buses.Acquire("fake0", port);
   Require(buses.Acquire("fake0", port) == bus, "live bus not reused");
-  auto driver = bus->arm_driver_shared();
-  auto& motor = motors.AcquireArm("fake0", driver, 1, Config());
+  auto driver = bus->driver_shared(Protocol::kArm);
+  auto& motor = motors.Acquire("fake0", driver, 1, Config());
   auto other_config = Config();
   other_config.can_channel = "fake1";
-  Require(&motors.AcquireArm("fake1", driver, 1, other_config) != &motor,
+  Require(&motors.Acquire("fake1", driver, 1, other_config) != &motor,
           "registry conflated channels");
-  std::weak_ptr<ArmDriver> weak_driver = driver;
+  std::weak_ptr<MotorDriver> weak_driver = driver;
   buses.Clear();
   Require(bus->can_port() == port.get(), "registry clear invalidated live bus");
   bus.reset();
@@ -130,7 +136,7 @@ void CheckProtocolLifecycle() {
   auto next_bus = buses.Acquire("fake0", next_port);
   auto next_config = Config();
   next_config.name = "rebound";
-  auto& rebound = motors.AcquireArm("fake0", next_bus->arm_driver_shared(), 1, next_config);
+  auto& rebound = motors.Acquire("fake0", next_bus->driver_shared(Protocol::kArm), 1, next_config);
   Require(&rebound == &motor && motor.Name() == "rebound", "registry did not rebind config");
   Require(motor.SetEnable(), "registry did not rebind driver");
   Require(next_stats->sent > 0, "rebound driver not using new port");
@@ -144,22 +150,83 @@ void CheckProtocolLifecycle() {
           "port not released after driver control block cleanup");
 }
 
+CanFrame Frame(uint32_t id) {
+  CanFrame frame;
+  frame.id = id;
+  frame.data = {0x16, 0x37, 0x81, 0x30, 0x12, 0x34, 0x00, 0x00};
+  return frame;
+}
+
+// Arm (node 1) and RB200 (node 2) share one channel; RX is routed by node ID.
+void CheckMixedProtocols() {
+  const auto rb200 = std::filesystem::path(std::getenv("AGX_MOTOR_SDK_ARM_LIB")).parent_path() /
+                     "libagx_motor_protocol_rb200.so";
+  if (!std::filesystem::is_regular_file(rb200)) {
+    std::cout << "SKIP mixed protocols: no " << rb200 << '\n';
+    return;
+  }
+  Require(setenv("AGX_MOTOR_SDK_RB200_LIB", rb200.c_str(), 1) == 0, "setenv failed");
+  auto& buses = CanBusRegistry::Default();
+  auto stats = std::make_shared<PortStats>();
+  auto port = std::make_shared<FakeCanPort>(stats);
+  auto bus = buses.Acquire("mixed0", port, Protocol::kArm);
+  Require(buses.Acquire("mixed0", port, Protocol::kRb200) == bus, "mixed bus not reused");
+  auto arm = bus->driver_shared(Protocol::kArm);
+  auto rb = bus->driver_shared(Protocol::kRb200);
+  Require(arm && rb && arm != rb, "per-protocol drivers missing");
+  Require(bus->driver_shared(Protocol::kArm) == arm && bus->driver() == arm.get(), "default driver changed");
+  bus->BindNode(1, Protocol::kArm);
+  bus->BindNode(2, Protocol::kRb200);
+  bus->BindNode(2, Protocol::kRb200);
+  bool conflict_rejected = false;
+  try {
+    bus->BindNode(1, Protocol::kRb200);
+  } catch (const std::invalid_argument&) {
+    conflict_rejected = true;
+  }
+  Require(conflict_rejected, "node protocol conflict accepted");
+
+  port->Inject(Frame(0x511));
+  port->Inject(Frame(0x512));
+  port->Inject(Frame(0x532));
+  port->Inject(Frame(0x513));
+  Require(arm->GetHighSpeedState(1).has_value(), "arm node 1 feedback not routed");
+  Require(!rb->GetHighSpeedState(1).has_value(), "arm node 1 leaked to rb200");
+  Require(rb->GetHighSpeedState(2).has_value(), "rb200 node 2 feedback not routed");
+  Require(!arm->GetHighSpeedState(2).has_value(), "rb200 node 2 leaked to arm");
+  const auto low = std::dynamic_pointer_cast<Rb200Driver>(rb)->GetLowSpeedState(2);
+  Require(low && low->status_word == 0x1637 && low->error_code == 0x8130,
+          "rb200 low-speed feedback not decoded");
+  Require(arm->GetHighSpeedState(3).has_value() && rb->GetHighSpeedState(3).has_value(),
+          "unbound node not broadcast");
+
+  const int sent = stats->sent;
+  Require(arm->SetEnable(1, true) && rb->SetEnable(2, true), "mixed enable failed");
+  Require(stats->sent == sent + 2, "mixed drivers did not share port");
+  arm.reset();
+  rb.reset();
+  bus.reset();
+  Require(stats->detached > 0 && stats->closed == 0, "mixed bus teardown");
+  buses.Clear();
+}
+
 int main(int argc, char** argv) {
   try {
     Require(argc == 2, "expected expired or protocol mode");
     if (std::string(argv[1]) == "expired") {
       auto& registry = MotorRegistry::Default();
-      auto& motor = registry.AcquireArm("fake0", {}, 1, Config());
+      auto& motor = registry.Acquire("fake0", {}, 1, Config());
       CheckExpired(motor);
       auto updated = Config();
       updated.name = "updated";
-      Require(&registry.AcquireArm("fake0", {}, 1, updated) == &motor, "motor not reused");
+      Require(&registry.Acquire("fake0", {}, 1, updated) == &motor, "motor not reused");
       Require(motor.Name() == "updated", "config not rebound");
       registry.Clear();
     } else {
       Require(std::string(argv[1]) == "protocol", "unknown mode");
       if (!SelectProtocol()) return 77;
       CheckProtocolLifecycle();
+      CheckMixedProtocols();
     }
     std::cout << "lifecycle software checks passed\n";
     return 0;

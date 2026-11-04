@@ -4,6 +4,9 @@ include pyproject.toml
 include setup.py
 include protocol_fetch.py
 recursive-include agx_motor_sdk/protocol libagx_motor_protocol_arm.so
+recursive-include agx_motor_sdk/protocol libagx_motor_protocol_rb200.so
 recursive-include agx_motor_sdk/protocol libagx_motor_protocol_arm.dll
+recursive-include agx_motor_sdk/protocol libagx_motor_protocol_rb200.dll
 recursive-include agx_motor_sdk/protocol libagx_motor_protocol_arm.dylib
+recursive-include agx_motor_sdk/protocol libagx_motor_protocol_rb200.dylib
 global-exclude *.py[cod] __pycache__ .DS_Store

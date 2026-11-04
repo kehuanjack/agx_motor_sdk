@@ -10,23 +10,11 @@ namespace agx {
 namespace motor {
 namespace {
 
-template <typename T>
-T LoadSymbol(void* handle, const char* name) {
-  dlerror();
-  auto* sym = dlsym(handle, name);
-  if (!sym) {
-    return nullptr;
-  }
-  return reinterpret_cast<T>(sym);
-}
-
-std::string DefaultLibraryPath(ProtocolVariant /*variant*/) {
-  const char* env = std::getenv("AGX_MOTOR_SDK_ARM_LIB");
+std::string DefaultLibraryPath(const char* suffix, const char* env_var) {
+  const char* env = std::getenv(env_var);
   if (env != nullptr && env[0] != '\0') {
     return env;
   }
-
-  const char* suffix = "libagx_motor_protocol_arm.so";
 
   std::vector<std::filesystem::path> candidates;
 
@@ -83,36 +71,35 @@ std::string DefaultLibraryPath(ProtocolVariant /*variant*/) {
 
 }  // namespace
 
-ProtocolLibrary::ProtocolLibrary(void* dl_handle, ProtocolVariant variant)
-    : dl_handle_(dl_handle), variant_(variant) {
+ProtocolLibrary::ProtocolLibrary(const char* lib_filename, const char* env_var,
+                                 const std::string& path) {
+  const std::string lib_path =
+      path.empty() ? DefaultLibraryPath(lib_filename, env_var) : path;
+  dlerror();
+  dl_handle_ = dlopen(lib_path.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (dl_handle_ == nullptr) {
+    const char* dl_err = dlerror();
+    load_error_ = dl_err != nullptr ? dl_err : "dlopen failed";
     return;
   }
-  create_ = LoadSymbol<CreateFn>(dl_handle_, "motor_create");
-  destroy_ = LoadSymbol<DestroyFn>(dl_handle_, "motor_destroy");
-  set_tx_ = LoadSymbol<SetTxFn>(dl_handle_, "motor_set_tx_callback");
-  has_tx_ = LoadSymbol<HasTxFn>(dl_handle_, "motor_has_tx_callback");
-  rx_ = LoadSymbol<RxFn>(dl_handle_, "motor_handle_rx_once");
-  hs_ = LoadSymbol<HsFn>(dl_handle_, "motor_get_high_speed_feedback");
-  ls_ = LoadSymbol<LsFn>(dl_handle_, "motor_get_low_speed_feedback");
-  target_ = LoadSymbol<TargetFn>(dl_handle_, "motor_set_target");
-  enable_ = LoadSymbol<EnableFn>(dl_handle_, "motor_set_enable");
-  reset_ = LoadSymbol<ResetFn>(dl_handle_, "motor_set_reset");
-  clear_ = LoadSymbol<ClearFn>(dl_handle_, "motor_set_clear_error");
-  zero_offset_ = LoadSymbol<ZeroOffsetFn>(dl_handle_, "motor_set_zero_offset");
-  profile_acc_dec_ =
-      LoadSymbol<ProfileAccDecFn>(dl_handle_, "motor_set_profile_acc_dec");
-  profile_vel_ = LoadSymbol<ProfileVelFn>(dl_handle_, "motor_set_profile_vel");
-  current_limit_ =
-      LoadSymbol<CurrentLimitFn>(dl_handle_, "motor_set_current_limit");
-
-  mit_ = LoadSymbol<MitFn>(dl_handle_, "motor_set_mit_control");
-  mit_crc_ = LoadSymbol<MitCrcFn>(dl_handle_, "motor_set_mit_control_crc");
-  collision_ =
-      LoadSymbol<CollisionFn>(dl_handle_, "motor_set_collision_threshold");
-  get_param_ = LoadSymbol<GetParamFn>(dl_handle_, "motor_get_param");
-  set_param_ = LoadSymbol<SetParamFn>(dl_handle_, "motor_set_param");
-  version_ = LoadSymbol<VersionFn>(dl_handle_, "motor_get_version");
+  create_ = LoadSymbol<CreateFn>("motor_create");
+  destroy_ = LoadSymbol<DestroyFn>("motor_destroy");
+  set_tx_ = LoadSymbol<SetTxFn>("motor_set_tx_callback");
+  has_tx_ = LoadSymbol<HasTxFn>("motor_has_tx_callback");
+  rx_ = LoadSymbol<RxFn>("motor_handle_rx_once");
+  hs_ = LoadSymbol<HsFn>("motor_get_high_speed_feedback");
+  target_ = LoadSymbol<TargetFn>("motor_set_target");
+  enable_ = LoadSymbol<EnableFn>("motor_set_enable");
+  reset_ = LoadSymbol<ResetFn>("motor_set_reset");
+  clear_ = LoadSymbol<ClearFn>("motor_set_clear_error");
+  zero_offset_ = LoadSymbol<ZeroOffsetFn>("motor_set_zero_offset");
+  profile_acc_dec_ = LoadSymbol<ProfileAccDecFn>("motor_set_profile_acc_dec");
+  profile_vel_ = LoadSymbol<ProfileVelFn>("motor_set_profile_vel");
+  current_limit_ = LoadSymbol<CurrentLimitFn>("motor_set_current_limit");
+  version_ = LoadSymbol<VersionFn>("motor_get_version");
+  if (create_ == nullptr || destroy_ == nullptr || rx_ == nullptr) {
+    load_error_ = "protocol library missing required symbols";
+  }
 }
 
 ProtocolLibrary::~ProtocolLibrary() {
@@ -121,25 +108,12 @@ ProtocolLibrary::~ProtocolLibrary() {
   }
 }
 
-std::shared_ptr<ProtocolLibrary> ProtocolLibrary::Load(ProtocolVariant variant,
-                                                       const std::string& path) {
-  const std::string lib_path = path.empty() ? DefaultLibraryPath(variant) : path;
+void* ProtocolLibrary::Symbol(const char* name) const {
+  if (dl_handle_ == nullptr) {
+    return nullptr;
+  }
   dlerror();
-  void* handle = dlopen(lib_path.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (handle == nullptr) {
-    auto lib = std::shared_ptr<ProtocolLibrary>(
-        new ProtocolLibrary(nullptr, variant));
-    const char* dl_err = dlerror();
-    lib->load_error_ = dl_err != nullptr ? dl_err : "dlopen failed";
-    return lib;
-  }
-
-  auto lib = std::shared_ptr<ProtocolLibrary>(new ProtocolLibrary(handle, variant));
-  if (lib->create_ == nullptr || lib->destroy_ == nullptr || lib->rx_ == nullptr) {
-    lib->load_error_ = "protocol library missing required symbols";
-    return lib;
-  }
-  return lib;
+  return dlsym(dl_handle_, name);
 }
 
 AgxMotorProtocolHandle* ProtocolLibrary::Create() {
@@ -173,12 +147,6 @@ int ProtocolLibrary::GetHighSpeedFeedback(AgxMotorProtocolHandle* handle,
                                           uint8_t node_id,
                                           AgxMotorHighSpeedFeedback* out) const {
   return hs_ != nullptr ? hs_(handle, node_id, out) : 0;
-}
-
-int ProtocolLibrary::GetLowSpeedFeedback(AgxMotorProtocolHandle* handle,
-                                         uint8_t node_id,
-                                         AgxMotorLowSpeedFeedback* out) const {
-  return ls_ != nullptr ? ls_(handle, node_id, out) : 0;
 }
 
 int ProtocolLibrary::SetTarget(AgxMotorProtocolHandle* handle, uint8_t node_id,
@@ -230,48 +198,6 @@ int ProtocolLibrary::SetProfileVel(AgxMotorProtocolHandle* handle,
 int ProtocolLibrary::SetCurrentLimit(AgxMotorProtocolHandle* handle,
                                     uint8_t node_id, float current) {
   return current_limit_ != nullptr ? current_limit_(handle, node_id, current) : 0;
-}
-
-int ProtocolLibrary::SetMitControl(AgxMotorProtocolHandle* handle,
-                                  uint8_t node_id, float p_des, float v_des,
-                                  float kp, float kd, float t_ff, float t_am) {
-  return mit_ != nullptr
-             ? mit_(handle, node_id, p_des, v_des, kp, kd, t_ff, t_am)
-             : 0;
-}
-
-int ProtocolLibrary::SetMitControlCrc(AgxMotorProtocolHandle* handle,
-                                     uint8_t node_id, float p_des, float v_des,
-                                     float kp, float kd, float t_ff,
-                                     float t_am) {
-  return mit_crc_ != nullptr
-             ? mit_crc_(handle, node_id, p_des, v_des, kp, kd, t_ff, t_am)
-             : 0;
-}
-
-int ProtocolLibrary::SetCollisionThreshold(AgxMotorProtocolHandle* handle,
-                                          uint8_t node_id,
-                                          float current_threshold,
-                                          float time_threshold) {
-  return collision_ != nullptr
-             ? collision_(handle, node_id, current_threshold, time_threshold)
-             : 0;
-}
-
-int ProtocolLibrary::GetParam(AgxMotorProtocolHandle* handle, uint8_t node_id,
-                              uint8_t idx1, uint8_t idx2, float timeout_s,
-                              float* out) {
-  return get_param_ != nullptr
-             ? get_param_(handle, node_id, idx1, idx2, timeout_s, out)
-             : 0;
-}
-
-int ProtocolLibrary::SetParam(AgxMotorProtocolHandle* handle, uint8_t node_id,
-                              uint8_t idx1, uint8_t idx2, float value,
-                              float timeout_s) {
-  return set_param_ != nullptr
-             ? set_param_(handle, node_id, idx1, idx2, value, timeout_s)
-             : 0;
 }
 
 int ProtocolLibrary::GetVersion(AgxMotorProtocolHandle* handle, uint8_t node_id,

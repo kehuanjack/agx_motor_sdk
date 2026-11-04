@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agx_motor_sdk/mechanism/arm_motor.hpp"
+#include "agx_motor_sdk/mechanism/motor_base.hpp"
 #include "agx_motor_sdk/mechanism/can_bus.hpp"
 #include "agx_motor_sdk/mechanism/types.hpp"
 
@@ -11,27 +11,35 @@
 #include <vector>
 
 namespace agx::motor {
-class ArmDriver;
 class CanPort;
+class MotorDriver;
 }  // namespace agx::motor
 
 namespace agx::motor::mechanism {
 
-/// Common module / joint-group base (not constructible directly).
+/// One YAML module (joint group).
 ///
-/// One YAML module maps to one :class:`ArmJointGroup`. Joints may use different CAN
-/// channels within the same module; each channel reuses a shared ``CanBus`` from
+/// Joints may use different protocols (``arm`` / ``rb200``) and CAN channels
+/// within the same module; each channel reuses a shared ``CanBus`` from
 /// ``CanBusRegistry``. Multiple modules on the same channel also share one ``CanBus``.
 ///
-/// Per-joint motor access: ``ArmJointGroup::MotorArm``.
-class JointGroupBase {
+/// Per-joint motor access: ``JointGroup::Motor`` returns ``MotorBase&``; cast to
+/// ``ArmMotor`` / ``Rb200Motor`` for protocol-specific commands.
+class JointGroup {
  public:
-  virtual ~JointGroupBase();
+  explicit JointGroup(const GroupConfig& config);
+  /// @param can_channel Module default CAN channel override.
+  JointGroup(const GroupConfig& config, std::string can_channel);
+  ~JointGroup();
 
-  JointGroupBase(const JointGroupBase&) = delete;
-  JointGroupBase& operator=(const JointGroupBase&) = delete;
-  JointGroupBase(JointGroupBase&&) noexcept;
-  JointGroupBase& operator=(JointGroupBase&&) noexcept;
+  static JointGroup FromYaml(const std::string& yaml_path, const std::string& module_key);
+  static JointGroup FromYaml(const std::string& yaml_path, const std::string& module_key,
+                             const std::string& can_channel);
+
+  JointGroup(const JointGroup&) = delete;
+  JointGroup& operator=(const JointGroup&) = delete;
+  JointGroup(JointGroup&&) noexcept;
+  JointGroup& operator=(JointGroup&&) noexcept;
 
   /// Inject an external ``CanPort`` for the module default channel before ``Connect``.
   /// The port must remain valid until ``Close``; the group does not take ownership.
@@ -79,7 +87,8 @@ class JointGroupBase {
   /// Joint-space feedback for one joint.
   std::optional<JointState> GetState(std::size_t index) const;
 
-  Protocol protocol() const { return Protocol::kArm; }
+  /// Module default protocol (joints may override per entry).
+  Protocol protocol() const { return config_.protocol; }
   /// Module default CAN channel (joints may override per entry).
   const std::string& can_channel() const { return can_channel_; }
   const GroupConfig& config() const { return config_; }
@@ -90,21 +99,25 @@ class JointGroupBase {
   CanBus* BusForJoint(std::size_t index);
   const CanBus* BusForJoint(std::size_t index) const;
 
- protected:
-  JointGroupBase(GroupConfig config, std::string can_channel);
+  /// Motor for joint ``index`` (``ArmMotor`` or ``Rb200Motor``); an invalid index
+  /// returns ``MotorBase::Null()``. Connects on first use.
+  MotorBase& Motor(int index);
+  const MotorBase& Motor(int index) const;
 
-  agx::motor::ArmDriver* ArmDriverPtr(const std::string& channel);
-  const agx::motor::ArmDriver* ArmDriverPtr(const std::string& channel) const;
-  agx::motor::ArmDriver* ArmDriverForJoint(std::size_t index);
-  const agx::motor::ArmDriver* ArmDriverForJoint(std::size_t index) const;
+  /// Default-protocol driver for ``channel`` (empty string = module default channel).
+  agx::motor::MotorDriver* GetDriver(const std::string& channel = "") const;
+  /// Driver used by joint ``index`` (its protocol on its channel).
+  agx::motor::MotorDriver* GetDriverForJoint(std::size_t index) const;
 
+  /// Joint-space MIT on one arm joint (requires YAML ``mit_tf`` / ``mit_kp`` / ``mit_kd``).
+  /// @return false for RB200 joints.
+  bool SetMit(std::size_t index, float position_rad, float velocity_rad_s, float torque_nm);
+
+ private:
   const JointConfig& JointCfg(std::size_t index) const;
-
   void ApplyDefaultChannelOverride(const std::string& can_channel);
-
-  /// Internal shared ``ArmMotor`` for a valid joint index.
-  ArmMotor& ArmMotorAt(std::size_t index);
-  const ArmMotor& ArmMotorAt(std::size_t index) const;
+  /// Shared motor for a valid joint index.
+  MotorBase& MotorAt(std::size_t index);
 
   GroupConfig config_;
   std::string can_channel_;
@@ -112,46 +125,17 @@ class JointGroupBase {
   std::unordered_map<std::string, std::shared_ptr<CanBus>> buses_;
 };
 
-/// Arm-protocol module (1 Mbps). Supports MIT and motor parameters.
-class ArmJointGroup : public JointGroupBase {
- public:
-  explicit ArmJointGroup(const GroupConfig& config);
-  ArmJointGroup(const GroupConfig& config, std::string can_channel);
-
-  static ArmJointGroup FromYaml(const std::string& yaml_path, const std::string& module_key);
-  static ArmJointGroup FromYaml(const std::string& yaml_path, const std::string& module_key,
-                                const std::string& can_channel);
-
-  /// Public arm motor view for joint ``index``; invalid index returns ``NullArmMotor``.
-  ArmMotorBase& MotorArm(int index);
-  const ArmMotorBase& MotorArm(int index) const;
-
-  /// Arm driver for ``channel`` (empty string = module default channel).
-  agx::motor::ArmDriver* GetArmDriver(const std::string& channel = "");
-  const agx::motor::ArmDriver* GetArmDriver(const std::string& channel = "") const;
-  agx::motor::ArmDriver* GetArmDriverForJoint(std::size_t index);
-  const agx::motor::ArmDriver* GetArmDriverForJoint(std::size_t index) const;
-
-  /// Joint-space MIT on one joint (requires YAML ``mit_tf`` / ``mit_kp`` / ``mit_kd``).
-  bool SetMit(std::size_t index, float position_rad, float velocity_rad_s, float torque_nm);
-};
-
-/// Factory: always returns ``ArmJointGroup``.
-std::unique_ptr<JointGroupBase> CreateJointGroup(const GroupConfig& config);
+std::unique_ptr<JointGroup> CreateJointGroup(const GroupConfig& config);
 /// Factory with module default ``can_channel`` override.
-std::unique_ptr<JointGroupBase> CreateJointGroup(const GroupConfig& config,
-                                                 std::string can_channel);
-
-std::unique_ptr<ArmJointGroup> CreateArmJointGroup(const GroupConfig& config);
-std::unique_ptr<ArmJointGroup> CreateArmJointGroup(const GroupConfig& config,
-                                                   std::string can_channel);
+std::unique_ptr<JointGroup> CreateJointGroup(const GroupConfig& config,
+                                             std::string can_channel);
 
 /// Load YAML and construct a joint group.
-std::unique_ptr<JointGroupBase> CreateJointGroupFromYaml(const std::string& yaml_path,
-                                                         const std::string& module_key);
+std::unique_ptr<JointGroup> CreateJointGroupFromYaml(const std::string& yaml_path,
+                                                     const std::string& module_key);
 /// Load YAML with module default ``can_channel`` override.
-std::unique_ptr<JointGroupBase> CreateJointGroupFromYaml(const std::string& yaml_path,
-                                                           const std::string& module_key,
-                                                           const std::string& can_channel);
+std::unique_ptr<JointGroup> CreateJointGroupFromYaml(const std::string& yaml_path,
+                                                     const std::string& module_key,
+                                                     const std::string& can_channel);
 
 }  // namespace agx::motor::mechanism

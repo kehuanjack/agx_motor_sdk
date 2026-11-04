@@ -23,7 +23,7 @@ def test_public_cpp_api_without_python_can(tmp_path):
         import agx_motor_sdk
         from agx_motor_sdk import ArmDriver, create_can_port
         from agx_motor_sdk import _native
-        from agx_motor_sdk.mechanism import ArmJointGroup
+        from agx_motor_sdk.mechanism import JointGroup
 
         port = create_can_port(
             channel="unused-no-CAN", backend="cpp", auto_connect=False,
@@ -43,7 +43,14 @@ def test_public_cpp_api_without_python_can(tmp_path):
         driver.handle_rx_once(msg=message)
         driver.close()
         port.close()
-        assert ArmJointGroup.__module__ == "agx_motor_sdk.mechanism.joint_group"
+        assert JointGroup.__module__ == "agx_motor_sdk.mechanism.joint_group"
+        from agx_motor_sdk.motor import (
+            ArmMotor, MotorBase, MotorDriver, Rb200Driver, Rb200Motor,
+        )
+        assert issubclass(ArmDriver, MotorDriver) and issubclass(Rb200Driver, MotorDriver)
+        assert issubclass(ArmMotor, MotorBase) and issubclass(Rb200Motor, MotorBase)
+        assert not hasattr(Rb200Driver, "set_target_current")
+        assert not hasattr(Rb200Motor, "set_mit")
         assert "can" not in sys.modules
         try:
             from agx_motor_sdk.can import PythonCanPort
@@ -69,6 +76,9 @@ def native():
         library = os.environ.get("ARM_LIB")
         if library:
             environment.setenv("AGX_MOTOR_SDK_ARM_LIB", library)
+        library = os.environ.get("RB200_LIB")
+        if library:
+            environment.setenv("AGX_MOTOR_SDK_RB200_LIB", library)
         environment.syspath_prepend(directory)
         yield importlib.import_module("_native")
 
@@ -132,7 +142,7 @@ def test_registry_releases_shared_driver(native):
     port = FakePort()
     reference = weakref.ref(port)
     driver = native.ArmDriver(port)
-    native.MotorRegistry.acquire_arm("fake0", driver, config.node_id, config)
+    native.MotorRegistry.acquire("fake0", driver, config.node_id, config)
     del port, driver
     gc.collect()
     assert reference() is not None
@@ -172,20 +182,19 @@ def test_group_injected_port_lifecycle(native, factory, explicit_close):
     config = native.load_module_config(example_yaml, "head")
     channel = "fake-group-lifecycle"
     if factory == "constructor":
-        group = native.ArmJointGroup(config)
+        group = native.JointGroup(config)
     elif factory == "constructor_channel":
-        group = native.ArmJointGroup(config, channel)
+        group = native.JointGroup(config, channel)
     elif factory == "yaml":
-        group = native.ArmJointGroup.from_yaml(example_yaml, "head")
+        group = native.JointGroup.from_yaml(example_yaml, "head")
     elif factory == "yaml_channel":
-        group = native.ArmJointGroup.from_yaml(example_yaml, "head", channel)
+        group = native.JointGroup.from_yaml(example_yaml, "head", channel)
     elif factory == "factory":
         group = native.create_joint_group(config)
     else:
         group = native.create_joint_group(config, channel)
 
-    assert isinstance(group, native.ArmJointGroup)
-    assert isinstance(group, native.JointGroupBase)
+    assert isinstance(group, native.JointGroup)
     port = FakePort()
     reference = weakref.ref(port)
     for can_channel in group.can_channels:
@@ -210,3 +219,32 @@ def test_group_injected_port_lifecycle(native, factory, explicit_close):
     del group
     gc.collect()
     assert reference() is None
+
+def test_group_motor_dispatches_by_protocol(native, tmp_path):
+    if not os.environ.get("AGX_MOTOR_SDK_RB200_LIB") and not os.environ.get("RB200_LIB"):
+        pytest.skip("set AGX_MOTOR_SDK_RB200_LIB for the mixed-protocol check")
+    yaml_path = tmp_path / "mixed.yaml"
+    yaml_path.write_text(textwrap.dedent("""
+        mixed:
+          can_channel: fake-mixed
+          protocol: arm
+          joints:
+            - joint_name: arm_joint
+              node_id: 1
+            - joint_name: rb200_joint
+              node_id: 2
+              protocol: rb200
+    """))
+    group = native.JointGroup.from_yaml(str(yaml_path), "mixed")
+    port = FakePort()
+    group.attach_can_port(port, "fake-mixed")
+    assert group.connect()
+    arm, rb200, invalid = group.motor(0), group.motor(1), group.motor(99)
+    assert isinstance(arm, native.ArmMotor) and arm.protocol == "arm"
+    assert isinstance(rb200, native.Rb200Motor) and rb200.protocol == "rb200"
+    assert not isinstance(invalid, (native.ArmMotor, native.Rb200Motor))
+    assert not invalid.is_valid
+    assert rb200.get_low_speed_feedback() is None
+    assert not group.set_mit(1, 0.0, 0.0, 0.0)
+    group.close()
+    native.MotorRegistry.clear()

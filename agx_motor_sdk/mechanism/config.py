@@ -4,10 +4,10 @@ Full field tables: :doc:`YAML_CONFIG.md` in the package root.
 
 Typical workflow::
 
-    from agx_motor_sdk.mechanism import ArmJointGroup, load_module_config
+    from agx_motor_sdk.mechanism import JointGroup, load_module_config
 
     cfg = load_module_config("robot_motors.yaml", "head")
-    group = ArmJointGroup(cfg)
+    group = JointGroup(cfg)
 """
 
 from typing import List
@@ -22,6 +22,7 @@ GroupConfig = _GroupConfig
 
 Attributes:
     can_channel: Default CAN interface name; required in YAML.
+    protocol: Module default protocol, ``"arm"`` (default) or ``"rb200"``.
     default_profile_vel_rad_s: Module default profile speed [rad/s] max 20.
     profile_accel_rad_s2: Default acceleration [rad/s²] max 12.56.
     profile_decel_rad_s2: Default deceleration [rad/s²] max 12.56.
@@ -40,6 +41,7 @@ Attributes:
     name: ``joint_name`` from YAML (required).
     node_id: CAN node ID, 1–15 (required).
     can_channel: Resolved channel (joint override or module default).
+    protocol: Resolved protocol (joint override or module default).
     polarity: Per-joint linear coefficient (default ``1.0``).
     profile_vel_rad_s: Override profile speed [rad/s] max 20.
     profile_accel_rad_s2: Override acceleration max 12.56 rad/s².

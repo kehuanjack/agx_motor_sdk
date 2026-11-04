@@ -2,7 +2,7 @@
 """Low-level :class:`~agx_motor_sdk.motor.ArmDriver` — poll high-speed feedback.
 
 Returns **motor space** position [rad], velocity [rad/s], current [A].
-Joint-space feedback with polarity: ``ArmJointGroup.motor(i).get_state()``.
+Joint-space feedback with polarity: ``JointGroup.motor(i).get_state()``.
 
 Usage::
 

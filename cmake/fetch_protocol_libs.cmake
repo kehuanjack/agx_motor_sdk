@@ -1,4 +1,4 @@
-# Fetch prebuilt arm protocol library (shared by cmake and pip).
+# Fetch prebuilt arm and RB200 protocol libraries (shared by cmake and pip).
 
 set(AGX_MOTOR_SDK_PROTOCOL_SRC_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/agx_motor_sdk/protocol")
@@ -45,12 +45,15 @@ function(agx_motor_sdk_stage_protocol_libs)
   file(MAKE_DIRECTORY "${AGX_MOTOR_SDK_PROTOCOL_BUILD_DIR}")
   file(GLOB _agx_protocol_libs
     "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.so"
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_rb200.so"
     "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.dll"
-    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.dylib")
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_rb200.dll"
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_arm.dylib"
+    "${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}/libagx_motor_protocol_rb200.dylib")
   if(NOT _agx_protocol_libs)
     message(WARNING
       "No protocol libraries under ${AGX_MOTOR_SDK_PROTOCOL_SRC_DIR}. "
-      "Runtime dlopen may fail unless AGX_MOTOR_SDK_ARM_LIB is set.")
+      "Runtime dlopen may fail unless AGX_MOTOR_SDK_ARM_LIB / AGX_MOTOR_SDK_RB200_LIB is set.")
     return()
   endif()
   foreach(_agx_lib IN LISTS _agx_protocol_libs)
